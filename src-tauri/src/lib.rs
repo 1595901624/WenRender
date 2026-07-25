@@ -40,6 +40,16 @@ fn scan_directory(directory_path: String) -> Result<DirectoryTree, String> {
     })
 }
 
+#[tauri::command]
+fn read_text_file(file_path: String) -> Result<String, String> {
+    let path = PathBuf::from(file_path);
+    if !path.is_file() {
+        return Err("所选路径不是文件".to_string());
+    }
+    std::fs::read_to_string(&path)
+        .map_err(|error| format!("无法读取文件 {}：{error}", path.display()))
+}
+
 fn collect_directory_entries(directory: &Path) -> Result<Vec<DirectoryNode>, String> {
     let entries = std::fs::read_dir(directory)
         .map_err(|error| format!("无法读取目录 {}：{error}", directory.display()))?;
@@ -113,7 +123,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![scan_directory])
+        .invoke_handler(tauri::generate_handler![scan_directory, read_text_file])
         .run(tauri::generate_context!())
         .expect("error while running WenRender");
 }
@@ -150,5 +160,15 @@ mod tests {
             .children
             .iter()
             .any(|node| node.name == "src" && node.is_directory));
+    }
+
+    #[test]
+    fn reads_a_persisted_text_file() {
+        let readme = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .join("README.md");
+        let content = read_text_file(readme.to_string_lossy().into_owned()).expect("read README");
+        assert!(!content.is_empty());
     }
 }

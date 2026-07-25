@@ -44,8 +44,15 @@ export function FileSidebar({
   onOpenFiles,
   onOpenFolder,
 }: Props) {
-  const [showAllFiles, setShowAllFiles] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [showAllFiles, setShowAllFiles] = useState(() => window.localStorage.getItem("wenrender-show-all-files") === "true");
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    try {
+      const paths = JSON.parse(window.localStorage.getItem("wenrender-expanded-directories") ?? "[]");
+      return new Set(Array.isArray(paths) ? paths.filter((path): path is string => typeof path === "string") : []);
+    } catch {
+      return new Set();
+    }
+  });
   const standaloneDocuments = documents.filter((document) => !document.directoryId);
 
   useEffect(() => {
@@ -55,6 +62,14 @@ export function FileSidebar({
       return next;
     });
   }, [directories]);
+
+  useEffect(() => {
+    window.localStorage.setItem("wenrender-show-all-files", String(showAllFiles));
+  }, [showAllFiles]);
+
+  useEffect(() => {
+    window.localStorage.setItem("wenrender-expanded-directories", JSON.stringify([...expanded]));
+  }, [expanded]);
 
   const toggleExpanded = (path: string) => {
     setExpanded((current) => {
@@ -88,9 +103,9 @@ export function FileSidebar({
         <span className="text-[10px] text-stone-400">{standaloneDocuments.length}</span>
       </div>
 
-      <ScrollArea.Root className="min-h-0 flex-1">
-        <ScrollArea.Viewport className="h-full w-full px-1 pb-4">
-          <div className="space-y-0.5">
+      <ScrollArea.Root className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        <ScrollArea.Viewport className="h-full w-full overflow-x-hidden overscroll-contain px-1 pb-4 [&>div]:!block [&>div]:!min-w-0 [&>div]:!w-full">
+          <div className="min-w-0 space-y-0.5">
             {standaloneDocuments.map((document) => {
               const dirty = document.content !== document.savedContent;
               return (
@@ -103,7 +118,7 @@ export function FileSidebar({
                     document.id === activeId ? "bg-[#e3e3e0] text-[#20211f]" : "text-stone-600 hover:bg-[#eaeae7]",
                   )}
                 >
-                  <FileText size={15} className={document.id === activeId ? "text-stone-800" : "text-stone-400"} />
+                  <FileText size={15} className={clsx("shrink-0", document.id === activeId ? "text-stone-800" : "text-stone-400")} />
                   <span className="min-w-0 flex-1 truncate">{document.name}</span>
                   {dirty && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
                   {standaloneDocuments.length > 1 && (
@@ -135,20 +150,20 @@ export function FileSidebar({
             </div>
           )}
 
-          <div className="space-y-1">
+          <div className="min-w-0 space-y-1">
             {directories.map((directory) => {
               const isExpanded = expanded.has(directory.path);
               return (
                 <div key={directory.id}>
-                  <div className="group flex items-center rounded-lg hover:bg-[#eaeae7]">
+                  <div className="group flex min-w-0 items-center overflow-hidden rounded-lg hover:bg-[#eaeae7]">
                     <button
                       className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-sm font-medium text-stone-700"
                       onClick={() => toggleExpanded(directory.path)}
                       title={directory.path}
                     >
-                      {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                      {isExpanded ? <FolderOpen size={15} /> : <Folder size={15} />}
-                      <span className="truncate">{directory.name}</span>
+                      {isExpanded ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
+                      {isExpanded ? <FolderOpen size={15} className="shrink-0" /> : <Folder size={15} className="shrink-0" />}
+                      <span className="min-w-0 flex-1 truncate">{directory.name}</span>
                     </button>
                     <button
                       className="mr-1 rounded p-1 text-stone-400 opacity-0 hover:bg-stone-200 hover:text-stone-700 group-hover:opacity-100"
@@ -175,8 +190,8 @@ export function FileSidebar({
             })}
           </div>
         </ScrollArea.Viewport>
-        <ScrollArea.Scrollbar orientation="vertical" className="flex w-2.5 touch-none select-none p-0.5">
-          <ScrollArea.Thumb className="flex-1 rounded-full bg-stone-300" />
+        <ScrollArea.Scrollbar orientation="vertical" className="absolute bottom-0 right-0 top-0 flex w-2.5 touch-none select-none bg-[#f3f3f1]/90 p-0.5">
+          <ScrollArea.Thumb className="min-h-8 flex-1 rounded-full bg-stone-300 hover:bg-stone-400" />
         </ScrollArea.Scrollbar>
       </ScrollArea.Root>
     </aside>
@@ -205,7 +220,7 @@ function DirectoryNodes({
   const visibleNodes = nodes.filter((node) => showAllFiles || node.isMarkdown || (node.isDirectory && hasMarkdown(node)));
 
   return (
-    <div>
+    <div className="min-w-0 overflow-hidden">
       {visibleNodes.map((node) => {
         const paddingLeft = 8 + depth * 14;
         if (node.isDirectory) {
@@ -213,14 +228,14 @@ function DirectoryNodes({
           return (
             <div key={node.path}>
               <button
-                className="flex w-full items-center gap-1.5 rounded-md py-1.5 pr-2 text-left text-[13px] text-stone-600 hover:bg-[#eaeae7]"
+                className="flex w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md py-1.5 pr-2 text-left text-[13px] text-stone-600 hover:bg-[#eaeae7]"
                 style={{ paddingLeft }}
                 onClick={() => onToggle(node.path)}
                 title={node.path}
               >
-                {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                {isExpanded ? <FolderOpen size={14} /> : <Folder size={14} />}
-                <span className="truncate">{node.name}</span>
+                {isExpanded ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
+                {isExpanded ? <FolderOpen size={14} className="shrink-0" /> : <Folder size={14} className="shrink-0" />}
+                <span className="min-w-0 flex-1 truncate">{node.name}</span>
               </button>
               {isExpanded && (
                 <DirectoryNodes
@@ -246,7 +261,7 @@ function DirectoryNodes({
             style={{ paddingLeft: paddingLeft + 18 }}
             title={node.isMarkdown ? node.path : "仅 Markdown 文件可查看"}
             className={clsx(
-              "flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-[13px]",
+              "flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-md py-1.5 pr-2 text-left text-[13px]",
               node.path === activePath
                 ? "bg-[#e3e3e0] text-[#20211f]"
                 : node.isMarkdown
@@ -254,8 +269,8 @@ function DirectoryNodes({
                   : "cursor-not-allowed text-stone-400",
             )}
           >
-            {node.isMarkdown ? <FileCode2 size={14} /> : <File size={14} />}
-            <span className="truncate">{node.name}</span>
+            {node.isMarkdown ? <FileCode2 size={14} className="shrink-0" /> : <File size={14} className="shrink-0" />}
+            <span className="min-w-0 flex-1 truncate">{node.name}</span>
           </button>
         );
       })}

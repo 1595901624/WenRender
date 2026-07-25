@@ -12,6 +12,7 @@ import { Preview, type PreviewHandle } from "./components/Preview";
 import { createId, fileName } from "./lib/path";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
+import { loadWorkspaceSession, saveWorkspaceSession, type WorkspaceSession } from "./lib/workspace";
 import type { DirectoryNode, Notice, OpenDirectory, OpenDocument } from "./types";
 
 const welcome = `# 欢迎使用文染
@@ -37,18 +38,61 @@ function App() {
   }]);
   const [directories, setDirectories] = useState<OpenDirectory[]>([]);
   const [activeId, setActiveId] = useState(documents[0].id);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => window.localStorage.getItem("wenrender-sidebar-open") !== "false",
+  );
   const [viewMode, setViewMode] = useState<"split" | "editor" | "preview">("split");
   const [notice, setNotice] = useState<Notice>(null);
   const [themeId, setThemeId] = useState(() => window.localStorage.getItem("wenrender-theme") ?? defaultTheme.id);
   const [outputLineHeight, setOutputLineHeight] = useState(defaultTheme.typography.bodyLineHeight);
   const [syncScroll, setSyncScroll] = useState(true);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const editorRef = useRef<EditorHandle>(null);
   const previewRef = useRef<PreviewHandle>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    const session = loadWorkspaceSession();
+    if (!session) {
+      setWorkspaceReady(true);
+      return;
+    }
+
+    void restoreWorkspaceSession(session).then((restored) => {
+      if (cancelled) return;
+      setDirectories(restored.directories);
+      if (restored.documents.length > 0) {
+        setDocuments(restored.documents);
+        setActiveId(restored.activeId);
+      }
+      setWorkspaceReady(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceReady) return;
+    const persistWorkspace = () => {
+      saveWorkspaceSession(documents, directories, activeId);
+    };
+    const timeout = window.setTimeout(persistWorkspace, 200);
+    window.addEventListener("beforeunload", persistWorkspace);
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("beforeunload", persistWorkspace);
+    };
+  }, [activeId, directories, documents, workspaceReady]);
+
+  useEffect(() => {
     window.localStorage.setItem("wenrender-theme", themeId);
   }, [themeId]);
+
+  useEffect(() => {
+    window.localStorage.setItem("wenrender-sidebar-open", String(sidebarOpen));
+  }, [sidebarOpen]);
 
   const active = documents.find((document) => document.id === activeId) ?? documents[0];
   const baseTheme = articleThemes.find((item) => item.id === themeId) ?? defaultTheme;
@@ -200,6 +244,10 @@ function App() {
         event.preventDefault();
         void openDocument();
       }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setSidebarOpen((value) => !value);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -226,7 +274,12 @@ function App() {
         <div className={clsx("m-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-black/10 bg-white shadow-sm", sidebarOpen && "ml-0")}>
         <header className="flex h-14 shrink-0 items-center border-b border-stone-200 bg-white px-3">
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <button className="icon-button" onClick={() => setSidebarOpen((value) => !value)}>
+            <button
+              className="icon-button"
+              onClick={() => setSidebarOpen((value) => !value)}
+              aria-label={sidebarOpen ? "收起侧边栏" : "展开侧边栏"}
+              title={`${sidebarOpen ? "收起" : "展开"}侧边栏（Ctrl+B）`}
+            >
               {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
             </button>
             <span className="ml-1 max-w-[360px] truncate text-sm font-medium text-[#272825]">{active.name}</span>
@@ -417,6 +470,90 @@ function countMarkdownFiles(nodes: DirectoryNode[]): number {
     (count, node) => count + (node.isMarkdown ? 1 : 0) + (node.isDirectory ? countMarkdownFiles(node.children) : 0),
     0,
   );
+}
+
+async function restoreWorkspaceSession(session: WorkspaceSession): Promise<{
+  directories: OpenDirectory[];
+  documents: OpenDocument[];
+  activeId: string;
+}> {
+  const restoredDirectories = (
+    await Promise.all(session.directoryPaths.map(async (path) => {
+      try {
+        const tree = await invoke<Omit<OpenDirectory, "id">>("scan_directory", {
+          directoryPath: path,
+        });
+        return { ...tree, id: createId() };
+      } catch {
+        return null;
+      }
+    }))
+  ).filter((directory): directory is OpenDirectory => directory !== null);
+
+  const directoriesByPath = new Map(restoredDirectories.map((directory) => [directory.path, directory]));
+  const restoredDocuments: OpenDocument[] = [];
+  let restoredActiveId: string | null = null;
+
+  for (const [index, persisted] of session.documents.entries()) {
+    if (!persisted.path) {
+      const id = createId();
+      restoredDocuments.push({
+        id,
+        path: null,
+        name: persisted.name,
+        content: persisted.scratchContent ?? "",
+        savedContent: persisted.scratchSavedContent ?? "",
+      });
+      if (index === session.activeIndex) restoredActiveId = id;
+      continue;
+    }
+
+    const directory = persisted.directoryPath
+      ? directoriesByPath.get(persisted.directoryPath)
+      : undefined;
+    const treeNode = directory
+      ? findNodeByPath(directory.children, persisted.path)
+      : null;
+
+    let diskContent = treeNode?.content ?? null;
+    if (diskContent == null) {
+      try {
+        diskContent = await invoke<string>("read_text_file", {
+          filePath: persisted.path,
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    const id = createId();
+    restoredDocuments.push({
+      id,
+      path: persisted.path,
+      name: fileName(persisted.path),
+      content: persisted.draftContent ?? diskContent,
+      savedContent: diskContent,
+      directoryId: directory?.id,
+    });
+    if (index === session.activeIndex) restoredActiveId = id;
+  }
+
+  return {
+    directories: restoredDirectories,
+    documents: restoredDocuments,
+    activeId: restoredActiveId ?? restoredDocuments[0]?.id ?? "",
+  };
+}
+
+function findNodeByPath(nodes: DirectoryNode[], path: string): DirectoryNode | null {
+  for (const node of nodes) {
+    if (node.path === path) return node;
+    if (node.isDirectory) {
+      const nested = findNodeByPath(node.children, path);
+      if (nested) return nested;
+    }
+  }
+  return null;
 }
 
 function resolveArticleImage(source: string, documentPath: string | null): string {
