@@ -33,6 +33,7 @@ fn main() {
 `;
 
 function App() {
+  // 启动时先显示欢迎文档；工作区恢复完成后再整体替换，避免异步恢复期间出现空状态。
   const [documents, setDocuments] = useState<OpenDocument[]>([{
     id: createId(), path: null, name: "欢迎.md", content: welcome, savedContent: welcome,
   }]);
@@ -50,6 +51,7 @@ function App() {
   const editorRef = useRef<EditorHandle>(null);
   const previewRef = useRef<PreviewHandle>(null);
 
+  // 目录需要重新扫描以反映磁盘最新状态，文件则按上次的打开顺序恢复。
   useEffect(() => {
     let cancelled = false;
     const session = loadWorkspaceSession();
@@ -75,6 +77,7 @@ function App() {
 
   useEffect(() => {
     if (!workspaceReady) return;
+    // 编辑时做短暂防抖；关闭窗口前同步落盘，兼顾性能和最后一次操作的可靠性。
     const persistWorkspace = () => {
       saveWorkspaceSession(documents, directories, activeId);
     };
@@ -128,6 +131,7 @@ function App() {
       for (const path of selected) {
         const existing = documents.find((item) => item.path === path);
         if (existing) {
+          // 用户显式打开目录树中的文件时，将它提升为侧边栏“文件”区域的独立条目。
           setDocuments((items) => items.map((item) => item.id === existing.id ? { ...item, directoryId: undefined } : item));
           setActiveId(existing.id);
           continue;
@@ -217,6 +221,7 @@ function App() {
 
   const copyToWechat = async () => {
     try {
+      // 同时写入 HTML 与纯文本，让公众号编辑器优先读取带内联样式的版本。
       const blobHtml = new Blob([rendered], { type: "text/html" });
       const blobText = new Blob([active.content], { type: "text/plain" });
       await navigator.clipboard.write([new ClipboardItem({ "text/html": blobHtml, "text/plain": blobText })]);
@@ -477,6 +482,7 @@ async function restoreWorkspaceSession(session: WorkspaceSession): Promise<{
   documents: OpenDocument[];
   activeId: string;
 }> {
+  // 各目录互不依赖，并行扫描可以明显缩短多项目工作区的恢复时间。
   const restoredDirectories = (
     await Promise.all(session.directoryPaths.map(async (path) => {
       try {
@@ -518,6 +524,7 @@ async function restoreWorkspaceSession(session: WorkspaceSession): Promise<{
     let diskContent = treeNode?.content ?? null;
     if (diskContent == null) {
       try {
+        // 重启后文件选择器授予的临时权限已失效，改由受控的 Tauri 命令重新读取。
         diskContent = await invoke<string>("read_text_file", {
           filePath: persisted.path,
         });
@@ -531,6 +538,7 @@ async function restoreWorkspaceSession(session: WorkspaceSession): Promise<{
       id,
       path: persisted.path,
       name: fileName(persisted.path),
+      // 草稿只覆盖编辑区内容，savedContent 始终来自磁盘，便于继续显示未保存状态。
       content: persisted.draftContent ?? diskContent,
       savedContent: diskContent,
       directoryId: directory?.id,
@@ -558,6 +566,7 @@ function findNodeByPath(nodes: DirectoryNode[], path: string): DirectoryNode | n
 
 function resolveArticleImage(source: string, documentPath: string | null): string {
   if (!documentPath || /^(?:https?:|data:|asset:|blob:)/i.test(source)) return source;
+  // Markdown 图片相对路径以当前文章目录为基准，并手动归一化 "." 与 ".."。
   const normalizedSource = decodeURIComponent(source).replace(/\//g, "\\");
   const directory = documentPath.replace(/[\\/][^\\/]+$/, "");
   const segments = `${directory}\\${normalizedSource}`.split("\\");

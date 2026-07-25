@@ -56,6 +56,7 @@ export function FileSidebar({
   const standaloneDocuments = documents.filter((document) => !document.directoryId);
 
   useEffect(() => {
+    // 新打开的项目默认展开根目录，同时保留用户之前操作过的子目录状态。
     setExpanded((current) => {
       const next = new Set(current);
       directories.forEach((directory) => next.add(directory.path));
@@ -104,6 +105,7 @@ export function FileSidebar({
       </div>
 
       <ScrollArea.Root className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        {/* Radix 默认的 table 包装层会被长文件名撑宽，这里强制为固定宽度块级元素。 */}
         <ScrollArea.Viewport className="h-full w-full overflow-x-hidden overscroll-contain px-1 pb-4 [&>div]:!block [&>div]:!min-w-0 [&>div]:!w-full">
           <div className="min-w-0 space-y-0.5">
             {standaloneDocuments.map((document) => {
@@ -217,6 +219,7 @@ function DirectoryNodes({
   onToggle: (path: string) => void;
   onSelect: (node: DirectoryNode, directoryId: string) => void;
 }) {
+  // “仅 MD”模式仍保留包含 Markdown 的祖先目录，否则用户无法展开到目标文件。
   const visibleNodes = nodes.filter((node) => showAllFiles || node.isMarkdown || (node.isDirectory && hasMarkdown(node)));
 
   return (

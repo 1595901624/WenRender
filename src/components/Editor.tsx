@@ -18,6 +18,7 @@ export type EditorHandle = {
 export const Editor = forwardRef<EditorHandle, Props>(function Editor({ value, onChange, onScrollRatio }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView>();
+  // 程序触发的同步滚动不再向预览回传，防止两个面板互相触发形成抖动。
   const suppressScroll = useRef(false);
   const onChangeRef = useRef(onChange);
   const onScrollRef = useRef(onScrollRatio);
@@ -37,6 +38,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({ value, o
 
   useEffect(() => {
     if (!host.current) return;
+    // CodeMirror 实例只创建一次，回调通过 ref 获取最新值，避免每次输入都重建编辑器。
     const state = EditorState.create({
       doc: value,
       extensions: [
@@ -71,6 +73,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({ value, o
   useEffect(() => {
     const view = viewRef.current;
     if (!view || view.state.doc.toString() === value) return;
+    // 切换左侧文件时，用外部文档内容替换当前 CodeMirror 文档。
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
   }, [value]);
 

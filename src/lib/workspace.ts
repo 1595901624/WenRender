@@ -2,6 +2,7 @@ import type { OpenDirectory, OpenDocument } from "../types";
 
 const workspaceStorageKey = "wenrender-workspace-v1";
 
+// 仅保存恢复工作区所需的信息；已有路径的干净文件不重复存储正文。
 export type PersistedDocument = {
   path: string | null;
   name: string;
@@ -46,6 +47,7 @@ export function saveWorkspaceSession(
   directories: OpenDirectory[],
   activeId: string,
 ): void {
+  // directoryId 每次启动都会重新生成，因此持久化时转换为稳定的目录路径。
   const directoryPathsById = new Map(directories.map((directory) => [directory.id, directory.path]));
   const persistedDocuments: PersistedDocument[] = documents.map((document) => {
     const directoryPath = document.directoryId

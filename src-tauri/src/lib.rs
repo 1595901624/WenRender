@@ -22,6 +22,7 @@ struct DirectoryTree {
 
 #[tauri::command]
 fn scan_directory(directory_path: String) -> Result<DirectoryTree, String> {
+    // 目录选择结果由前端持久化，重启时会再次调用本命令构建最新目录树。
     let root = PathBuf::from(directory_path);
     if !root.is_dir() {
         return Err("所选路径不是目录".to_string());
@@ -42,6 +43,7 @@ fn scan_directory(directory_path: String) -> Result<DirectoryTree, String> {
 
 #[tauri::command]
 fn read_text_file(file_path: String) -> Result<String, String> {
+    // 文件对话框的 WebView 授权不会跨重启保留，此命令用于恢复用户明确打开过的文件。
     let path = PathBuf::from(file_path);
     if !path.is_file() {
         return Err("所选路径不是文件".to_string());
@@ -64,6 +66,7 @@ fn collect_directory_entries(directory: &Path) -> Result<Vec<DirectoryNode>, Str
 
         if file_type.is_dir() {
             let name = entry.file_name().to_string_lossy().into_owned();
+            // 跳过常见的大型生成目录和隐藏配置目录，控制首次扫描耗时。
             if name.starts_with('.') || matches!(name.as_str(), "node_modules" | "target" | "dist")
             {
                 continue;

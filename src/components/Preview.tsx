@@ -16,6 +16,7 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ html,
   onScrollRef.current = onScrollRatio;
 
   useEffect(() => {
+    // iframe 隔离文章样式，确保主题的内联 CSS 不会污染应用界面。
     if (frame.current) frame.current.srcdoc = html;
   }, [html]);
 
@@ -39,6 +40,7 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ html,
     if (!window || !document) return;
     const root = document.documentElement;
     if (!root) return;
+    // 每次 srcdoc 重载后 iframe 的 window 会变化，因此必须在 onLoad 中重新绑定。
     window.onscroll = () => {
       if (suppressScroll.current) return;
       const maximum = Math.max(1, root.scrollHeight - root.clientHeight);

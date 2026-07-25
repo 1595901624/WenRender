@@ -28,6 +28,7 @@ hljs.registerLanguage("html", xml);
 hljs.registerLanguage("xml", xml);
 
 function protectSpaces(html: string) {
+  // 微信会清理高亮 span 之间的普通空白，转换为 nbsp 可避免 fn、let 等 token 粘连。
   return html.replace(/(^|<\/span>|>)( +)(?=<span|[^<])/gm, (_, prefix, spaces) =>
     prefix + "&nbsp;".repeat(spaces.length),
   );
@@ -57,6 +58,7 @@ function codeBlock(code: string, language: string, theme: ArticleTheme) {
     "hljs-symbol": "#56b6c2",
   };
 
+  // 发布内容不能依赖外部 CSS，把 Highlight.js 的 class 预先转换为微信可保留的内联颜色。
   const inlineHighlighted = highlighted.replace(
     /<span class="([^"]+)">/g,
     (_, className: string) => {
@@ -72,6 +74,7 @@ function createRenderer(theme: ArticleTheme, resolveImage?: (source: string) => 
   const bodyText = `font-family:${theme.typography.fontFamily};font-size:${theme.typography.bodySize}px;line-height:${theme.typography.bodyLineHeight} !important;color:${theme.colors.text};letter-spacing:0;text-align:left;`;
   const paragraph = `margin:0 0 ${theme.typography.paragraphSpacing}px;${bodyText}`;
   const inlineCode = `font-size:${theme.typography.codeSize}px;word-break:break-word;padding:2px 5px;border-radius:4px;margin:0 2px;color:${theme.colors.accent};font-weight:600;background-color:${theme.colors.inlineCodeBackground};font-family:Consolas,'SFMono-Regular',Menlo,monospace;`;
+  // 所有关键样式直接写进标签，复制到公众号后不需要加载样式表或脚本。
   const md = new MarkdownIt({
     html: true,
     linkify: true,
@@ -159,6 +162,7 @@ function blockquoteStyle(theme: ArticleTheme): string {
 }
 
 function contrastText(hex: string): string {
+  // 根据感知亮度为表头和标签自动选择黑色或白色文字。
   const normalized = hex.replace("#", "");
   const value = normalized.length === 3
     ? normalized.split("").map((part) => part + part).join("")

@@ -11,6 +11,7 @@ export type HeadingStyle =
   | "newspaper";
 
 export type ArticleTheme = {
+  // 主题同时描述预览和最终导出所需的完整视觉参数，避免渲染器硬编码某一套样式。
   id: string;
   name: string;
   description: string;
@@ -51,6 +52,7 @@ const systemSans = "-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang 
 const humanistSans = "'Avenir Next',Avenir,'PingFang SC','Microsoft YaHei',sans-serif";
 const serif = "'Noto Serif SC','Songti SC',SimSun,serif";
 
+// 经典绿保持为默认主题，其余主题通过同一数据结构扩展，无需修改主题选择器。
 export const articleThemes: ArticleTheme[] = [
   {
     id: "classic-green",
