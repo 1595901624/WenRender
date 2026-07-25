@@ -3,27 +3,47 @@ use std::path::{Path, PathBuf};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct MarkdownFile {
+struct DirectoryNode {
     path: String,
-    content: String,
+    name: String,
+    is_directory: bool,
+    is_markdown: bool,
+    content: Option<String>,
+    children: Vec<DirectoryNode>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirectoryTree {
+    path: String,
+    name: String,
+    children: Vec<DirectoryNode>,
 }
 
 #[tauri::command]
-fn scan_markdown_directory(directory_path: String) -> Result<Vec<MarkdownFile>, String> {
+fn scan_directory(directory_path: String) -> Result<DirectoryTree, String> {
     let root = PathBuf::from(directory_path);
     if !root.is_dir() {
         return Err("所选路径不是目录".to_string());
     }
 
-    let mut files = Vec::new();
-    collect_markdown_files(&root, &mut files)?;
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(files)
+    let name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| root.display().to_string());
+
+    Ok(DirectoryTree {
+        path: root.to_string_lossy().into_owned(),
+        name,
+        children: collect_directory_entries(&root)?,
+    })
 }
 
-fn collect_markdown_files(directory: &Path, files: &mut Vec<MarkdownFile>) -> Result<(), String> {
+fn collect_directory_entries(directory: &Path) -> Result<Vec<DirectoryNode>, String> {
     let entries = std::fs::read_dir(directory)
         .map_err(|error| format!("无法读取目录 {}：{error}", directory.display()))?;
+    let mut nodes = Vec::new();
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -33,29 +53,48 @@ fn collect_markdown_files(directory: &Path, files: &mut Vec<MarkdownFile>) -> Re
         };
 
         if file_type.is_dir() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with('.') || matches!(name.as_ref(), "node_modules" | "target" | "dist")
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || matches!(name.as_str(), "node_modules" | "target" | "dist")
             {
                 continue;
             }
-            // 子目录可能受系统权限限制；跳过它们不应阻止其余文章被打开。
-            let _ = collect_markdown_files(&path, files);
-            continue;
-        }
-
-        if !file_type.is_file() || !is_markdown_file(&path) {
-            continue;
-        }
-
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            files.push(MarkdownFile {
+            nodes.push(DirectoryNode {
                 path: path.to_string_lossy().into_owned(),
-                content,
+                name,
+                is_directory: true,
+                is_markdown: false,
+                content: None,
+                // 无权限的子目录显示为空，不阻止其余目录树加载。
+                children: collect_directory_entries(&path).unwrap_or_default(),
             });
+            continue;
         }
+
+        if !file_type.is_file() {
+            continue;
+        }
+
+        let is_markdown = is_markdown_file(&path);
+        let content = is_markdown
+            .then(|| std::fs::read_to_string(&path).ok())
+            .flatten();
+        nodes.push(DirectoryNode {
+            path: path.to_string_lossy().into_owned(),
+            name: entry.file_name().to_string_lossy().into_owned(),
+            is_directory: false,
+            is_markdown,
+            content,
+            children: Vec::new(),
+        });
     }
-    Ok(())
+
+    nodes.sort_by(|left, right| {
+        right
+            .is_directory
+            .cmp(&left.is_directory)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    Ok(nodes)
 }
 
 fn is_markdown_file(path: &Path) -> bool {
@@ -74,7 +113,42 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![scan_markdown_directory])
+        .invoke_handler(tauri::generate_handler![scan_directory])
         .run(tauri::generate_context!())
         .expect("error while running WenRender");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scans_markdown_regular_files_and_directories() {
+        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .to_path_buf();
+        let tree = scan_directory(workspace.to_string_lossy().into_owned()).expect("scan tree");
+
+        let readme = tree
+            .children
+            .iter()
+            .find(|node| node.name == "README.md")
+            .expect("README.md");
+        assert!(readme.is_markdown);
+        assert!(readme.content.is_some());
+
+        let package = tree
+            .children
+            .iter()
+            .find(|node| node.name == "package.json")
+            .expect("package.json");
+        assert!(!package.is_markdown);
+        assert!(package.content.is_none());
+
+        assert!(tree
+            .children
+            .iter()
+            .any(|node| node.name == "src" && node.is_directory));
+    }
 }

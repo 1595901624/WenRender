@@ -12,7 +12,7 @@ import { Preview, type PreviewHandle } from "./components/Preview";
 import { createId, fileName } from "./lib/path";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
-import type { Notice, OpenDocument } from "./types";
+import type { DirectoryNode, Notice, OpenDirectory, OpenDocument } from "./types";
 
 const welcome = `# 欢迎使用文染
 
@@ -35,6 +35,7 @@ function App() {
   const [documents, setDocuments] = useState<OpenDocument[]>([{
     id: createId(), path: null, name: "欢迎.md", content: welcome, savedContent: welcome,
   }]);
+  const [directories, setDirectories] = useState<OpenDirectory[]>([]);
   const [activeId, setActiveId] = useState(documents[0].id);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [viewMode, setViewMode] = useState<"split" | "editor" | "preview">("split");
@@ -70,7 +71,11 @@ function App() {
       if (!selected) return;
       for (const path of selected) {
         const existing = documents.find((item) => item.path === path);
-        if (existing) { setActiveId(existing.id); continue; }
+        if (existing) {
+          setDocuments((items) => items.map((item) => item.id === existing.id ? { ...item, directoryId: undefined } : item));
+          setActiveId(existing.id);
+          continue;
+        }
         const content = await readTextFile(path);
         const id = createId();
         setDocuments((items) => [...items, { id, path, name: fileName(path), content, savedContent: content }]);
@@ -85,26 +90,50 @@ function App() {
     try {
       const selected = await open({ directory: true, multiple: false, title: "打开 Markdown 目录" });
       if (!selected) return;
-      const markdownFiles = await invoke<Array<{ path: string; content: string }>>("scan_markdown_directory", {
-        directoryPath: selected,
-      });
-      if (markdownFiles.length === 0) {
-        notify("该目录中没有找到 Markdown 文件", "neutral");
+      const existingDirectory = directories.find((directory) => directory.path === selected);
+      if (existingDirectory) {
+        notify("该目录已经打开", "neutral");
         return;
       }
-      const loaded = markdownFiles.map(({ path, content }) => ({
-        id: createId(), path, name: fileName(path), content, savedContent: content,
-      }));
-      const firstExisting = documents.find((item) => item.path === loaded[0].path);
-      setDocuments((items) => {
-        const existingPaths = new Set(items.map((item) => item.path));
-        return [...items, ...loaded.filter((item) => !existingPaths.has(item.path))];
+      const tree = await invoke<Omit<OpenDirectory, "id">>("scan_directory", {
+        directoryPath: selected,
       });
-      setActiveId(firstExisting?.id ?? loaded[0].id);
-      notify(`已打开目录中的 ${loaded.length} 篇文章`, "success");
+      const directory = { ...tree, id: createId() };
+      setDirectories((items) => [...items, directory]);
+      const firstMarkdown = findFirstMarkdown(directory.children);
+      if (firstMarkdown) openTreeDocument(firstMarkdown, directory.id);
+      const markdownCount = countMarkdownFiles(directory.children);
+      notify(`目录已打开，共 ${markdownCount} 篇 Markdown`, "success");
     } catch (error) {
       notify(`打开目录失败：${String(error)}`, "error");
     }
+  };
+
+  const openTreeDocument = (node: DirectoryNode, directoryId: string) => {
+    if (!node.isMarkdown || node.content == null) return;
+    const existing = documents.find((item) => item.path === node.path);
+    if (existing) {
+      setActiveId(existing.id);
+      return;
+    }
+    const id = createId();
+    setDocuments((items) => [...items, {
+      id,
+      path: node.path,
+      name: node.name,
+      content: node.content ?? "",
+      savedContent: node.content ?? "",
+      directoryId,
+    }]);
+    setActiveId(id);
+  };
+
+  const closeDirectory = (directoryId: string) => {
+    setDirectories((items) => items.filter((item) => item.id !== directoryId));
+    const removedDocumentIds = new Set(documents.filter((item) => item.directoryId === directoryId).map((item) => item.id));
+    const remaining = documents.filter((item) => item.directoryId !== directoryId);
+    setDocuments(remaining);
+    if (removedDocumentIds.has(activeId)) setActiveId(remaining[0].id);
   };
 
   const saveDocument = async () => {
@@ -170,9 +199,13 @@ function App() {
         {sidebarOpen && (
           <FileSidebar
             documents={documents}
+            directories={directories}
             activeId={activeId}
+            activePath={active.path}
             onSelect={setActiveId}
+            onSelectTreeFile={openTreeDocument}
             onClose={closeDocument}
+            onCloseDirectory={closeDirectory}
             onNew={newDocument}
             onOpenFiles={openDocument}
             onOpenFolder={openDirectory}
@@ -296,6 +329,24 @@ function ToolbarButton({ label, onClick, children }: { label: string; onClick: (
       <Tooltip.Trigger asChild><button className="icon-button" aria-label={label} onClick={onClick}>{children}</button></Tooltip.Trigger>
       <Tooltip.Portal><Tooltip.Content sideOffset={8} className="rounded bg-stone-900 px-2 py-1 text-xs text-white shadow">{label}</Tooltip.Content></Tooltip.Portal>
     </Tooltip.Root>
+  );
+}
+
+function findFirstMarkdown(nodes: DirectoryNode[]): DirectoryNode | null {
+  for (const node of nodes) {
+    if (node.isMarkdown) return node;
+    if (node.isDirectory) {
+      const nested = findFirstMarkdown(node.children);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+function countMarkdownFiles(nodes: DirectoryNode[]): number {
+  return nodes.reduce(
+    (count, node) => count + (node.isMarkdown ? 1 : 0) + (node.isDirectory ? countMarkdownFiles(node.children) : 0),
+    0,
   );
 }
 
