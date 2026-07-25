@@ -82,7 +82,7 @@ export function FileSidebar({
   };
 
   return (
-    <aside className="flex h-full w-[268px] shrink-0 flex-col bg-[#f3f3f1] px-2.5 pb-2.5 pt-3">
+    <aside className="flex h-full w-[240px] shrink-0 flex-col bg-[#f3f3f1] px-2.5 pb-2.5 pt-3">
       <div className="flex h-11 items-center justify-between px-2">
         <div className="flex items-center gap-2.5">
           <div className="grid h-8 w-8 place-items-center rounded-lg bg-[#20211f] text-sm font-black text-white">文</div>
