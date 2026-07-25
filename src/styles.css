@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  html, body, #root { height: 100%; margin: 0; }
+  body { @apply font-sans antialiased; }
+  button { @apply outline-none; }
+}
+
+@layer components {
+  .icon-button {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-lg text-stone-500 transition hover:bg-stone-100 hover:text-stone-800 focus-visible:ring-2 focus-visible:ring-moss-500;
+  }
+  .menu-item {
+    @apply flex cursor-default select-none items-center gap-2 rounded-md px-2.5 py-2 text-stone-700 outline-none hover:bg-moss-50 focus:bg-moss-50;
+  }
+}
+
+.cm-editor.cm-focused { outline: none; }
+.cm-editor { height: 100%; }
