@@ -65,13 +65,13 @@ function codeBlock(code: string, language: string, theme: ArticleTheme) {
     },
   );
 
-  return `<pre style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:18px 0;padding:18px 17px;background-color:${theme.colors.codeBackground};border:1px solid #292d32;border-radius:8px;color:${theme.colors.codeText};font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;tab-size:4;white-space:pre;word-break:normal;box-sizing:border-box;"><code style="font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;white-space:pre;">${protectSpaces(inlineHighlighted)}</code></pre>`;
+  return `<pre style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:18px 0;padding:18px 17px;background-color:${theme.colors.codeBackground};border:1px solid ${theme.colors.border};border-radius:${theme.appearance.codeRadius}px;color:${theme.colors.codeText};font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;tab-size:4;white-space:pre;word-break:normal;box-sizing:border-box;"><code style="font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;white-space:pre;">${protectSpaces(inlineHighlighted)}</code></pre>`;
 }
 
 function createRenderer(theme: ArticleTheme, resolveImage?: (source: string) => string) {
-  const bodyText = `font-size:${theme.typography.bodySize}px;line-height:${theme.typography.bodyLineHeight} !important;color:${theme.colors.text};letter-spacing:0;text-align:left;`;
-  const paragraph = `margin:0 0 18px;${bodyText}`;
-  const inlineCode = `font-size:${theme.typography.codeSize}px;word-break:break-word;padding:2px 5px;border-radius:4px;margin:0 2px;color:${theme.colors.accent};font-weight:600;background-color:#f4f6f8;font-family:Consolas,'SFMono-Regular',Menlo,monospace;`;
+  const bodyText = `font-family:${theme.typography.fontFamily};font-size:${theme.typography.bodySize}px;line-height:${theme.typography.bodyLineHeight} !important;color:${theme.colors.text};letter-spacing:0;text-align:left;`;
+  const paragraph = `margin:0 0 ${theme.typography.paragraphSpacing}px;${bodyText}`;
+  const inlineCode = `font-size:${theme.typography.codeSize}px;word-break:break-word;padding:2px 5px;border-radius:4px;margin:0 2px;color:${theme.colors.accent};font-weight:600;background-color:${theme.colors.inlineCodeBackground};font-family:Consolas,'SFMono-Regular',Menlo,monospace;`;
   const md = new MarkdownIt({
     html: true,
     linkify: true,
@@ -86,13 +86,13 @@ function createRenderer(theme: ArticleTheme, resolveImage?: (source: string) => 
   md.renderer.rules.paragraph_open = () => `<p style="${paragraph}">`;
   md.renderer.rules.heading_open = (tokens, index) => {
     const level = Number(tokens[index].tag.slice(1));
-    if (level === 1) return `<h1 style="margin:0 0 30px;color:${theme.colors.heading};font-size:${theme.typography.h1Size}px;line-height:1.45;font-weight:700;letter-spacing:.01em;">`;
-    if (level === 2) return `<h2 style="display:inline-block;margin:34px 0 22px;padding:0 0 8px;color:${theme.colors.heading};font-size:${theme.typography.h2Size}px;line-height:1.5;font-weight:700;border-bottom:3px solid ${theme.colors.accent} !important;">`;
+    if (level === 1) return `<h1 style="margin:0 0 30px;color:${theme.colors.heading};font-family:${theme.typography.fontFamily};font-size:${theme.typography.h1Size}px;line-height:1.45;font-weight:700;letter-spacing:.01em;text-align:${theme.appearance.h1Align};">`;
+    if (level === 2) return `<h2 style="${headingStyle(theme)}">`;
     return `<h${level} style="margin:28px 0 13px;padding-left:10px;border-left:3px solid ${theme.colors.accent};color:${theme.colors.heading};font-size:${level === 3 ? 18 : 16}px;line-height:1.5;font-weight:700;">`;
   };
   md.renderer.rules.strong_open = () => `<strong style="color:${theme.colors.accent};font-weight:700;">`;
   md.renderer.rules.code_inline = (tokens, index) => `<code style="${inlineCode}">${md.utils.escapeHtml(tokens[index].content)}</code>`;
-  md.renderer.rules.blockquote_open = () => `<blockquote style="margin:20px 0;padding:13px 16px;border-left:4px solid ${theme.colors.accent};background-color:${theme.colors.accentSoft};color:#4c5b50;">`;
+  md.renderer.rules.blockquote_open = () => `<blockquote style="${blockquoteStyle(theme)}">`;
   md.renderer.rules.bullet_list_open = () => `<ul style="margin:8px 0 18px;padding-left:24px;line-height:${theme.typography.bodyLineHeight};">`;
   md.renderer.rules.ordered_list_open = () => `<ol style="margin:8px 0 18px;padding-left:24px;line-height:${theme.typography.bodyLineHeight};">`;
   md.renderer.rules.list_item_open = () => '<li style="margin:7px 0;">';
@@ -106,13 +106,67 @@ function createRenderer(theme: ArticleTheme, resolveImage?: (source: string) => 
     const originalSource = token.attrGet("src") ?? "";
     const src = resolveImage?.(originalSource) ?? originalSource;
     const alt = token.content;
-    return `<img src="${md.utils.escapeHtml(src)}" alt="${md.utils.escapeHtml(alt)}" style="display:block;max-width:100%;height:auto;margin:20px auto;border-radius:4px;" />`;
+    return `<img src="${md.utils.escapeHtml(src)}" alt="${md.utils.escapeHtml(alt)}" style="display:block;max-width:100%;height:auto;margin:20px auto;border-radius:${theme.appearance.imageRadius}px;" />`;
   };
-  md.renderer.rules.table_open = () => '<div style="overflow-x:auto;margin:20px 0;"><table style="width:100%;border-collapse:collapse;color:#404040;font-size:14px;line-height:1.7;text-align:left;">';
+  md.renderer.rules.table_open = () => `<div style="overflow-x:auto;margin:20px 0;"><table style="width:100%;border-collapse:collapse;color:${theme.colors.text};font-size:14px;line-height:1.7;text-align:left;">`;
   md.renderer.rules.table_close = () => "</table></div>";
-  md.renderer.rules.th_open = () => `<th style="padding:9px 10px;border:1px solid ${theme.colors.accent};background-color:${theme.colors.accent} !important;color:#ffffff !important;font-weight:600;">`;
-  md.renderer.rules.td_open = () => `<td style="padding:9px 10px;border:1px solid ${theme.colors.border};background-color:#ffffff;">`;
+  md.renderer.rules.th_open = () => `<th style="padding:9px 10px;border:1px solid ${theme.colors.accent};background-color:${theme.colors.accent} !important;color:${contrastText(theme.colors.accent)} !important;font-weight:600;">`;
+  md.renderer.rules.td_open = () => `<td style="padding:9px 10px;border:1px solid ${theme.colors.border};background-color:${theme.colors.articleBackground};">`;
   return md;
+}
+
+function headingStyle(theme: ArticleTheme): string {
+  const base = `margin:34px 0 22px;color:${theme.colors.heading};font-family:${theme.typography.fontFamily};font-size:${theme.typography.h2Size}px;line-height:1.5;font-weight:700;`;
+  const accent = theme.colors.accent;
+  switch (theme.appearance.headingStyle) {
+    case "left-bar":
+      return `${base}display:block;padding:3px 0 3px 12px;border-left:4px solid ${accent};`;
+    case "filled":
+      return `${base}display:inline-block;padding:5px 12px;background-color:${theme.colors.accentSoft};border:1px solid ${accent};border-radius:5px;`;
+    case "centered":
+      return `${base}display:block;padding:0 0 10px;text-align:center;border-bottom:1px solid ${theme.colors.border};`;
+    case "boxed":
+      return `${base}display:inline-block;padding:5px 12px;border:1px solid ${accent};border-radius:6px;`;
+    case "marker":
+      return `${base}display:inline-block;padding:3px 7px;background-color:${theme.colors.accentSoft};border-bottom:4px solid ${accent};`;
+    case "double-line":
+      return `${base}display:block;padding:9px 0;text-align:center;border-top:1px solid ${accent};border-bottom:1px solid ${accent};`;
+    case "minimal":
+      return `${base}display:block;padding:0 0 8px;border-bottom:1px solid ${theme.colors.border};`;
+    case "tag":
+      return `${base}display:inline-block;padding:5px 12px;background-color:${accent};color:${contrastText(accent)};border-radius:2px;`;
+    case "newspaper":
+      return `${base}display:block;padding:8px 0;text-align:center;letter-spacing:.08em;border-top:2px solid ${accent};border-bottom:1px solid ${accent};`;
+    case "underline":
+    default:
+      return `${base}display:inline-block;padding:0 0 8px;border-bottom:3px solid ${accent};`;
+  }
+}
+
+function blockquoteStyle(theme: ArticleTheme): string {
+  const base = `margin:20px 0;padding:13px 16px;color:${theme.colors.muted};font-family:${theme.typography.fontFamily};line-height:${theme.typography.bodyLineHeight};`;
+  switch (theme.appearance.blockquoteStyle) {
+    case "soft":
+      return `${base}background-color:${theme.colors.accentSoft};border-radius:8px;`;
+    case "quote":
+      return `${base}background-color:transparent;border-top:1px solid ${theme.colors.border};border-bottom:1px solid ${theme.colors.border};font-style:italic;`;
+    case "card":
+      return `${base}background-color:${theme.colors.accentSoft};border:1px solid ${theme.colors.border};border-radius:8px;`;
+    case "border":
+    default:
+      return `${base}border-left:4px solid ${theme.colors.accent};background-color:${theme.colors.accentSoft};`;
+  }
+}
+
+function contrastText(hex: string): string {
+  const normalized = hex.replace("#", "");
+  const value = normalized.length === 3
+    ? normalized.split("").map((part) => part + part).join("")
+    : normalized;
+  const red = Number.parseInt(value.slice(0, 2), 16);
+  const green = Number.parseInt(value.slice(2, 4), 16);
+  const blue = Number.parseInt(value.slice(4, 6), 16);
+  return (red * 299 + green * 587 + blue * 114) / 1000 > 150 ? "#222222" : "#ffffff";
 }
 
 export function renderMarkdown(source: string, theme: ArticleTheme = defaultTheme, resolveImage?: (source: string) => string): string {
@@ -129,8 +183,8 @@ export function wrapHtml(rendered: string, title = "WenRender 文章", theme: Ar
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapedTitle}</title>
 </head>
-<body style="margin:0;background:#ffffff;color:${theme.colors.text};font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue','PingFang SC','Microsoft YaHei',sans-serif;">
-  <article style="max-width:677px;margin:0 auto;padding:32px 20px 48px;box-sizing:border-box;font-size:${theme.typography.bodySize}px;line-height:${theme.typography.bodyLineHeight};">${rendered}</article>
+<body style="margin:0;background:${theme.colors.articleBackground};color:${theme.colors.text};font-family:${theme.typography.fontFamily};">
+  <article style="max-width:677px;margin:0 auto;padding:32px 20px 48px;box-sizing:border-box;background-color:${theme.colors.articleBackground};font-family:${theme.typography.fontFamily};font-size:${theme.typography.bodySize}px;line-height:${theme.typography.bodyLineHeight};">${rendered}</article>
 </body>
 </html>`;
 }

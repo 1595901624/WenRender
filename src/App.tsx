@@ -40,11 +40,15 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [viewMode, setViewMode] = useState<"split" | "editor" | "preview">("split");
   const [notice, setNotice] = useState<Notice>(null);
-  const [themeId, setThemeId] = useState(defaultTheme.id);
+  const [themeId, setThemeId] = useState(() => window.localStorage.getItem("wenrender-theme") ?? defaultTheme.id);
   const [outputLineHeight, setOutputLineHeight] = useState(defaultTheme.typography.bodyLineHeight);
   const [syncScroll, setSyncScroll] = useState(true);
   const editorRef = useRef<EditorHandle>(null);
   const previewRef = useRef<PreviewHandle>(null);
+
+  useEffect(() => {
+    window.localStorage.setItem("wenrender-theme", themeId);
+  }, [themeId]);
 
   const active = documents.find((document) => document.id === activeId) ?? documents[0];
   const baseTheme = articleThemes.find((item) => item.id === themeId) ?? defaultTheme;
@@ -240,21 +244,51 @@ function App() {
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-64 rounded-xl border border-stone-200 bg-white p-2 shadow-xl">
-                  <div className="px-2 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-400">文章主题</div>
-                  {articleThemes.map((item) => (
-                    <DropdownMenu.Item key={item.id} onSelect={() => setThemeId(item.id)} className="flex cursor-default items-center gap-3 rounded-lg p-2 outline-none focus:bg-stone-100">
-                      <div className="flex overflow-hidden rounded-md ring-1 ring-black/5">
-                        {item.swatches.map((color) => <span key={color} className="h-8 w-3.5" style={{ backgroundColor: color }} />)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-stone-800">{item.name}</div>
-                        <div className="truncate text-[11px] text-stone-400">{item.description}</div>
-                      </div>
-                      {item.id === themeId && <Check size={15} className="text-stone-800" />}
-                    </DropdownMenu.Item>
-                  ))}
-                  <div className="mt-1 border-t border-stone-100 px-2 pb-1 pt-2 text-[11px] leading-5 text-stone-400">主题配置已独立，后续可继续加入新的配色与排版。</div>
+                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 max-h-[min(560px,calc(100vh-72px))] w-[520px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-2xl border border-stone-200 bg-white p-2.5 shadow-[0_18px_50px_rgba(28,25,23,0.16)]">
+                  <div className="flex items-center justify-between px-2 pb-2.5 pt-1">
+                    <div>
+                      <div className="text-sm font-semibold text-stone-800">文章主题</div>
+                      <div className="mt-0.5 text-[11px] text-stone-400">选择后将立即应用到预览和导出内容</div>
+                    </div>
+                    <span className="rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-500">{articleThemes.length} 款内置</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {articleThemes.map((item) => (
+                      <DropdownMenu.Item
+                        key={item.id}
+                        onSelect={() => setThemeId(item.id)}
+                        className={clsx(
+                          "group relative flex cursor-default items-center gap-3 rounded-xl border p-2.5 outline-none transition focus:bg-stone-50",
+                          item.id === themeId ? "border-stone-300 bg-stone-50" : "border-transparent hover:border-stone-200",
+                        )}
+                      >
+                        <div
+                          className="relative h-12 w-11 shrink-0 overflow-hidden rounded-lg border shadow-sm"
+                          style={{ backgroundColor: item.colors.articleBackground, borderColor: item.colors.border }}
+                        >
+                          <span className="absolute left-2 right-2 top-2 h-1 rounded-full" style={{ backgroundColor: item.colors.accent }} />
+                          <span className="absolute left-2 right-3 top-[17px] h-px" style={{ backgroundColor: item.colors.border }} />
+                          <span className="absolute left-2 right-2 top-[23px] h-px" style={{ backgroundColor: item.colors.border }} />
+                          <span className="absolute bottom-2 left-2 h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: item.colors.codeBackground }} />
+                          <span className="absolute bottom-2 left-[23px] right-2 h-2.5 rounded-sm" style={{ backgroundColor: item.colors.accentSoft }} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-sm font-medium text-stone-800">{item.name}</span>
+                            <span className="flex shrink-0 overflow-hidden rounded-full ring-1 ring-black/5">
+                              {item.swatches.map((color) => <span key={color} className="h-2.5 w-2.5" style={{ backgroundColor: color }} />)}
+                            </span>
+                          </div>
+                          <div className="mt-1 truncate text-[11px] text-stone-400">{item.description}</div>
+                        </div>
+                        {item.id === themeId && (
+                          <span className="absolute right-2 top-2 grid h-4 w-4 place-items-center rounded-full bg-stone-800 text-white">
+                            <Check size={10} strokeWidth={3} />
+                          </span>
+                        )}
+                      </DropdownMenu.Item>
+                    ))}
+                  </div>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
