@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Menu, Palette, PanelLeftClose, PanelLeftOpen, Save, SplitSquareHorizontal } from "lucide-react";
+import { Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Palette, PanelLeftClose, PanelLeftOpen, Save, SplitSquareHorizontal } from "lucide-react";
 import clsx from "clsx";
-import { Editor } from "./components/Editor";
+import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
-import { Preview } from "./components/Preview";
+import { Preview, type PreviewHandle } from "./components/Preview";
 import { createId, fileName } from "./lib/path";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
@@ -40,6 +40,9 @@ function App() {
   const [viewMode, setViewMode] = useState<"split" | "editor" | "preview">("split");
   const [notice, setNotice] = useState<Notice>(null);
   const [themeId, setThemeId] = useState(defaultTheme.id);
+  const [syncScroll, setSyncScroll] = useState(true);
+  const editorRef = useRef<EditorHandle>(null);
+  const previewRef = useRef<PreviewHandle>(null);
 
   const active = documents.find((document) => document.id === activeId) ?? documents[0];
   const theme = articleThemes.find((item) => item.id === themeId) ?? defaultTheme;
@@ -75,6 +78,32 @@ function App() {
       }
     } catch (error) {
       notify(`打开失败：${String(error)}`, "error");
+    }
+  };
+
+  const openDirectory = async () => {
+    try {
+      const selected = await open({ directory: true, multiple: false, title: "打开 Markdown 目录" });
+      if (!selected) return;
+      const markdownFiles = await invoke<Array<{ path: string; content: string }>>("scan_markdown_directory", {
+        directoryPath: selected,
+      });
+      if (markdownFiles.length === 0) {
+        notify("该目录中没有找到 Markdown 文件", "neutral");
+        return;
+      }
+      const loaded = markdownFiles.map(({ path, content }) => ({
+        id: createId(), path, name: fileName(path), content, savedContent: content,
+      }));
+      const firstExisting = documents.find((item) => item.path === loaded[0].path);
+      setDocuments((items) => {
+        const existingPaths = new Set(items.map((item) => item.path));
+        return [...items, ...loaded.filter((item) => !existingPaths.has(item.path))];
+      });
+      setActiveId(firstExisting?.id ?? loaded[0].id);
+      notify(`已打开目录中的 ${loaded.length} 篇文章`, "success");
+    } catch (error) {
+      notify(`打开目录失败：${String(error)}`, "error");
     }
   };
 
@@ -137,27 +166,29 @@ function App() {
 
   return (
     <Tooltip.Provider delayDuration={350}>
-      <div className="flex h-screen min-w-[900px] flex-col overflow-hidden bg-white text-ink">
-        <header className="flex h-16 shrink-0 items-center border-b border-stone-200 bg-white px-3">
-          <div className="flex min-w-[220px] items-center gap-2">
+      <div className="flex h-screen min-w-[900px] overflow-hidden bg-[#f3f3f1] text-ink">
+        {sidebarOpen && (
+          <FileSidebar
+            documents={documents}
+            activeId={activeId}
+            onSelect={setActiveId}
+            onClose={closeDocument}
+            onNew={newDocument}
+            onOpenFiles={openDocument}
+            onOpenFolder={openDirectory}
+          />
+        )}
+        <div className={clsx("m-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-black/10 bg-white shadow-sm", sidebarOpen && "ml-0")}>
+        <header className="flex h-14 shrink-0 items-center border-b border-stone-200 bg-white px-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <button className="icon-button" onClick={() => setSidebarOpen((value) => !value)}>
               {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
             </button>
-            <div className="ml-1 flex items-center gap-2.5">
-              <div className="grid h-8 w-8 place-items-center rounded-lg bg-moss-600 text-sm font-black text-white">文</div>
-              <div>
-                <div className="text-sm font-semibold leading-none">文染</div>
-                <div className="mt-1 text-[10px] uppercase tracking-[0.16em] text-stone-400">WenRender</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex min-w-0 flex-1 items-center justify-center">
-            <span className="max-w-[420px] truncate text-sm font-medium">{active.name}</span>
+            <span className="ml-1 max-w-[360px] truncate text-sm font-medium text-[#272825]">{active.name}</span>
             {active.content !== active.savedContent && <span className="ml-2 h-1.5 w-1.5 rounded-full bg-amber-500" />}
           </div>
 
-          <div className="flex min-w-[330px] items-center justify-end gap-1.5">
+          <div className="flex items-center justify-end gap-1">
             <ToolbarButton label="打开文件" onClick={openDocument}><FolderOpen size={17} /></ToolbarButton>
             <ToolbarButton label="保存" onClick={saveDocument}><Save size={17} /></ToolbarButton>
             <div className="mx-1 h-5 w-px bg-stone-200" />
@@ -171,7 +202,7 @@ function App() {
                 <DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-64 rounded-xl border border-stone-200 bg-white p-2 shadow-xl">
                   <div className="px-2 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-400">文章主题</div>
                   {articleThemes.map((item) => (
-                    <DropdownMenu.Item key={item.id} onSelect={() => setThemeId(item.id)} className="flex cursor-default items-center gap-3 rounded-lg p-2 outline-none focus:bg-moss-50">
+                    <DropdownMenu.Item key={item.id} onSelect={() => setThemeId(item.id)} className="flex cursor-default items-center gap-3 rounded-lg p-2 outline-none focus:bg-stone-100">
                       <div className="flex overflow-hidden rounded-md ring-1 ring-black/5">
                         {item.swatches.map((color) => <span key={color} className="h-8 w-3.5" style={{ backgroundColor: color }} />)}
                       </div>
@@ -179,7 +210,7 @@ function App() {
                         <div className="text-sm font-medium text-stone-800">{item.name}</div>
                         <div className="truncate text-[11px] text-stone-400">{item.description}</div>
                       </div>
-                      {item.id === themeId && <Check size={15} className="text-moss-600" />}
+                      {item.id === themeId && <Check size={15} className="text-stone-800" />}
                     </DropdownMenu.Item>
                   ))}
                   <div className="mt-1 border-t border-stone-100 px-2 pb-1 pt-2 text-[11px] leading-5 text-stone-400">主题配置已独立，后续可继续加入新的配色与排版。</div>
@@ -192,12 +223,15 @@ function App() {
                 ["split", SplitSquareHorizontal, "分栏"],
                 ["preview", Eye, "仅预览"],
               ] as const).map(([mode, Icon, label]) => (
-                <button key={mode} title={label} onClick={() => setViewMode(mode)} className={clsx("rounded-md p-1.5 transition", viewMode === mode ? "bg-white text-moss-700 shadow-sm" : "text-stone-400 hover:text-stone-600")}>
+                <button key={mode} title={label} onClick={() => setViewMode(mode)} className={clsx("rounded-md p-1.5 transition", viewMode === mode ? "bg-white text-[#20211f] shadow-sm" : "text-stone-400 hover:text-stone-600")}>
                   <Icon size={16} />
                 </button>
               ))}
             </div>
-            <button className="ml-2 inline-flex h-9 items-center gap-2 rounded-lg bg-moss-600 px-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-moss-700" onClick={copyToWechat}>
+            <ToolbarButton label={syncScroll ? "同步滚动已开启" : "同步滚动已关闭"} onClick={() => setSyncScroll((value) => !value)}>
+              <Link2 size={17} className={syncScroll ? "text-[#20211f]" : "text-stone-300"} />
+            </ToolbarButton>
+            <button className="ml-1 inline-flex h-9 items-center gap-2 rounded-lg bg-[#20211f] px-3.5 text-sm font-medium text-white transition hover:bg-black" onClick={copyToWechat}>
               <Clipboard size={16} />复制到公众号
             </button>
             <DropdownMenu.Root>
@@ -213,24 +247,38 @@ function App() {
         </header>
 
         <main className="flex min-h-0 flex-1">
-          {sidebarOpen && <FileSidebar documents={documents} activeId={activeId} onSelect={setActiveId} onClose={closeDocument} onNew={newDocument} />}
           <div className="flex min-w-0 flex-1">
             {viewMode !== "preview" && (
               <section className={clsx("min-w-0", viewMode === "split" ? "w-1/2 border-r border-stone-200" : "w-full")}>
                 <div className="flex h-10 items-center justify-between border-b border-stone-100 bg-[#fbfcfb] px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">
                   <span>Markdown</span><span>{active.content.length} 字符</span>
                 </div>
-                <div className="h-[calc(100%-40px)]"><Editor key={active.id} value={active.content} onChange={updateActive} /></div>
+                <div className="h-[calc(100%-40px)]">
+                  <Editor
+                    ref={editorRef}
+                    key={active.id}
+                    value={active.content}
+                    onChange={updateActive}
+                    onScrollRatio={(ratio) => { if (syncScroll) previewRef.current?.scrollToRatio(ratio); }}
+                  />
+                </div>
               </section>
             )}
             {viewMode !== "editor" && (
               <section className={clsx("min-w-0", viewMode === "split" ? "w-1/2" : "w-full")}>
                 <div className="flex h-10 items-center border-b border-stone-200 bg-[#f8f9f6] px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">微信预览 · 677px</div>
-                <div className="h-[calc(100%-40px)]"><Preview html={fullHtml} /></div>
+                <div className="h-[calc(100%-40px)]">
+                  <Preview
+                    ref={previewRef}
+                    html={fullHtml}
+                    onScrollRatio={(ratio) => { if (syncScroll) editorRef.current?.scrollToRatio(ratio); }}
+                  />
+                </div>
               </section>
             )}
           </div>
         </main>
+        </div>
 
         {notice && (
           <div className={clsx("fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full px-4 py-2 text-sm shadow-xl", notice.tone === "error" ? "bg-red-600 text-white" : "bg-[#1f2922] text-white")}>
@@ -245,7 +293,7 @@ function App() {
 function ToolbarButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <Tooltip.Root>
-      <Tooltip.Trigger asChild><button className="icon-button" onClick={onClick}>{children}</button></Tooltip.Trigger>
+      <Tooltip.Trigger asChild><button className="icon-button" aria-label={label} onClick={onClick}>{children}</button></Tooltip.Trigger>
       <Tooltip.Portal><Tooltip.Content sideOffset={8} className="rounded bg-stone-900 px-2 py-1 text-xs text-white shadow">{label}</Tooltip.Content></Tooltip.Portal>
     </Tooltip.Root>
   );
