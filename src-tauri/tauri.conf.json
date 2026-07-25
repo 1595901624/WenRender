@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "文染 WenRender",
-        "width": 1440,
-        "height": 900,
-        "minWidth": 900,
-        "minHeight": 640,
+        "width": 1200,
+        "height": 700,
+        "minWidth": 1000,
+        "minHeight": 700,
         "center": true
       }
     ],
@@ -24,7 +24,9 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },
