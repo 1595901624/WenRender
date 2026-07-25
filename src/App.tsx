@@ -4,7 +4,7 @@ import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Palette, PanelLeftClose, PanelLeftOpen, Save, SplitSquareHorizontal } from "lucide-react";
+import { AlignVerticalSpaceAround, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Palette, PanelLeftClose, PanelLeftOpen, Save, SplitSquareHorizontal } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
@@ -41,12 +41,20 @@ function App() {
   const [viewMode, setViewMode] = useState<"split" | "editor" | "preview">("split");
   const [notice, setNotice] = useState<Notice>(null);
   const [themeId, setThemeId] = useState(defaultTheme.id);
+  const [outputLineHeight, setOutputLineHeight] = useState(defaultTheme.typography.bodyLineHeight);
   const [syncScroll, setSyncScroll] = useState(true);
   const editorRef = useRef<EditorHandle>(null);
   const previewRef = useRef<PreviewHandle>(null);
 
   const active = documents.find((document) => document.id === activeId) ?? documents[0];
-  const theme = articleThemes.find((item) => item.id === themeId) ?? defaultTheme;
+  const baseTheme = articleThemes.find((item) => item.id === themeId) ?? defaultTheme;
+  const theme = useMemo(() => ({
+    ...baseTheme,
+    typography: {
+      ...baseTheme.typography,
+      bodyLineHeight: outputLineHeight,
+    },
+  }), [baseTheme, outputLineHeight]);
   const rendered = useMemo(() => renderMarkdown(active.content, theme, (source) => resolveArticleImage(source, active.path)), [active.content, active.path, theme]);
   const fullHtml = useMemo(() => wrapHtml(rendered, active.name.replace(/\.md$/i, ""), theme), [rendered, active.name, theme]);
 
@@ -247,6 +255,33 @@ function App() {
                     </DropdownMenu.Item>
                   ))}
                   <div className="mt-1 border-t border-stone-100 px-2 pb-1 pt-2 text-[11px] leading-5 text-stone-400">主题配置已独立，后续可继续加入新的配色与排版。</div>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-stone-600 transition hover:bg-stone-100"
+                  title="设置输出正文行高"
+                >
+                  <AlignVerticalSpaceAround size={15} />
+                  <span>行高 {outputLineHeight.toFixed(2)}</span>
+                  <ChevronDown size={12} className="text-stone-400" />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-44 rounded-xl border border-stone-200 bg-white p-1.5 text-sm shadow-xl">
+                  <div className="px-2 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-400">输出正文行高</div>
+                  {[1.5, 1.6, 1.75, 1.8, 2].map((lineHeight) => (
+                    <DropdownMenu.Item
+                      key={lineHeight}
+                      onSelect={() => setOutputLineHeight(lineHeight)}
+                      className="menu-item justify-between"
+                    >
+                      <span>{lineHeight.toFixed(2)}</span>
+                      {outputLineHeight === lineHeight && <Check size={14} />}
+                    </DropdownMenu.Item>
+                  ))}
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
