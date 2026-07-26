@@ -1,4 +1,5 @@
 import type { OpenDirectory, OpenDocument } from "../types";
+import { hasUnsavedChanges } from "./document";
 
 const workspaceStorageKey = "wenrender-workspace-v1";
 
@@ -59,7 +60,7 @@ export function saveWorkspaceSession(
         path: document.path,
         name: document.name,
         directoryPath,
-        draftContent: document.content !== document.savedContent ? document.content : undefined,
+        draftContent: hasUnsavedChanges(document) ? document.content : undefined,
       };
     }
 

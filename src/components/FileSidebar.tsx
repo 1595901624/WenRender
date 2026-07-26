@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import clsx from "clsx";
+import { hasUnsavedChanges } from "../lib/document";
 import type { DirectoryNode, OpenDirectory, OpenDocument } from "../types";
 
 type Props = {
@@ -113,7 +114,7 @@ export function FileSidebar({
         <ScrollArea.Viewport className="h-full w-full overflow-x-hidden overscroll-contain px-1 pb-4 [&>div]:!block [&>div]:!min-w-0 [&>div]:!w-full">
           <div className="min-w-0 space-y-0.5">
             {standaloneDocuments.map((document) => {
-              const dirty = document.content !== document.savedContent;
+              const dirty = hasUnsavedChanges(document);
               return (
                 <button
                   key={document.id}

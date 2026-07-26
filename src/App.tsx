@@ -11,6 +11,7 @@ import { FileSidebar } from "./components/FileSidebar";
 import { Preview, type PreviewHandle } from "./components/Preview";
 import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
+import { hasUnsavedChanges } from "./lib/document";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
 import { loadWorkspaceSession, saveWorkspaceSession, type WorkspaceSession } from "./lib/workspace";
@@ -309,7 +310,7 @@ function App() {
               {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
             </button>
             <span className="ml-1 max-w-[360px] truncate text-sm font-medium text-[#272825]">{active.name}</span>
-            {active.content !== active.savedContent && <span className="ml-2 h-1.5 w-1.5 rounded-full bg-amber-500" />}
+            {hasUnsavedChanges(active) && <span className="ml-2 h-1.5 w-1.5 rounded-full bg-amber-500" />}
           </div>
 
           <div className="flex items-center justify-end gap-1">
