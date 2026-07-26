@@ -1084,7 +1084,7 @@ function AboutSettings() {
 
         <dl className="divide-y divide-stone-100 px-5 dark:divide-stone-700">
           <AboutRow label="当前版本" value={packageMetadata.version} />
-          <AboutRow label="支持平台" value="Windows、macOS、Linux" />
+          {/* <AboutRow label="支持平台" value="Windows、macOS、Linux" /> */}
           <AboutRow label="核心技术" value="Tauri 2、React、CodeMirror 6" />
           <AboutRow label="开源协议" value="GNU AGPL v3" />
         </dl>
