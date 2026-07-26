@@ -212,7 +212,16 @@ function App() {
     try {
       const path = active.path ?? await save({ defaultPath: active.name, filters: [{ name: "Markdown", extensions: ["md"] }] });
       if (!path) return;
-      await writeTextFile(path, active.content);
+      if (active.path) {
+        // 文件选择器权限不会跨应用重启保留，已有文件交给后端受控命令写回。
+        await invoke("write_existing_text_file", {
+          filePath: path,
+          content: active.content,
+        });
+      } else {
+        // 新文件刚由保存对话框选定，仍可使用对话框授予的临时写权限。
+        await writeTextFile(path, active.content);
+      }
       setDocuments((items) => items.map((item) => item.id === active.id ? { ...item, path, name: fileName(path), savedContent: item.content } : item));
       notify("文章已保存", "success");
     } catch (error) {
