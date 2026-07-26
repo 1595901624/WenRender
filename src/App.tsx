@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
-import { AlertTriangle, AlignVerticalSpaceAround, ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Monitor, Moon, Palette, PanelLeftClose, PanelLeftOpen, Save, Settings, SplitSquareHorizontal, Sun } from "lucide-react";
+import { AlertTriangle, AlignVerticalSpaceAround, ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, ExternalLink, Eye, FileDown, FolderOpen, Github, Info, Link2, Menu, Monitor, Moon, Palette, PanelLeftClose, PanelLeftOpen, Save, Settings, SplitSquareHorizontal, Sun } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
@@ -18,6 +19,7 @@ import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
 import { loadWorkspaceSession, saveWorkspaceSession, type WorkspaceSession } from "./lib/workspace";
 import type { DirectoryNode, FileInspection, FileSnapshot, Notice, OpenDirectory, OpenDocument } from "./types";
+import packageMetadata from "../package.json";
 
 type SaveOutcome = {
   status: "saved" | "conflict";
@@ -39,6 +41,7 @@ type PendingClose = {
 
 type AppColorScheme = "system" | "light" | "dark";
 type AppPage = "workspace" | "settings";
+type SettingsSection = "general" | "about";
 
 const welcome = `# 欢迎使用文染
 
@@ -958,66 +961,40 @@ function SettingsPage({
   colorScheme: AppColorScheme;
   onColorSchemeChange: (value: AppColorScheme) => void;
 }) {
+  const [section, setSection] = useState<SettingsSection>("general");
+
   return (
     <main className="flex min-h-0 flex-1 bg-[#f8f8f6] dark:bg-[#1b1c19]">
       {/* 设置分类单独占一列，后续增加编辑器、导出等设置时无需改动页面结构。 */}
       <nav className="w-52 shrink-0 border-r border-stone-200 px-3 py-5 dark:border-stone-700">
         <div className="px-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">设置</div>
-        <button className="mt-3 flex w-full items-center gap-2 rounded-lg bg-stone-200/70 px-3 py-2 text-left text-sm font-medium text-stone-800 dark:bg-stone-800 dark:text-stone-100">
-          <Settings size={15} />
-          通用
-        </button>
+        <div className="mt-3 space-y-1">
+          {([
+            ["general", Settings, "通用"],
+            ["about", Info, "关于"],
+          ] as const).map(([value, Icon, label]) => (
+            <button
+              key={value}
+              className={clsx(
+                "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition",
+                section === value
+                  ? "bg-stone-200/70 text-stone-800 dark:bg-stone-800 dark:text-stone-100"
+                  : "text-stone-500 hover:bg-stone-200/50 hover:text-stone-800 dark:text-stone-400 dark:hover:bg-stone-800/60 dark:hover:text-stone-100",
+              )}
+              onClick={() => setSection(value)}
+            >
+              <Icon size={15} />
+              {label}
+            </button>
+          ))}
+        </div>
       </nav>
 
       <ScrollArea.Root className="min-w-0 flex-1 overflow-hidden">
         <ScrollArea.Viewport className="h-full w-full">
-          <div className="mx-auto w-full max-w-3xl px-10 py-9">
-            <div>
-              <h1 className="text-xl font-semibold text-stone-900 dark:text-stone-100">通用设置</h1>
-              <p className="mt-1.5 text-sm text-stone-500 dark:text-stone-400">调整文染的软件外观与通用行为。</p>
-            </div>
-
-            <section className="mt-8 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
-              <div className="border-b border-stone-200 px-5 py-4 dark:border-stone-700">
-                <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">外观</div>
-                <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">
-                  软件主题应用于侧边栏、工具栏、菜单、设置、编辑器和系统弹窗。微信文章预览保持文章主题原本的样式。
-                </div>
-              </div>
-              <div className="px-5 py-5">
-                <div className="text-sm font-medium text-stone-800 dark:text-stone-200">软件主题</div>
-                <div className="mt-3 grid grid-cols-3 gap-3">
-                  {([
-                    ["system", Monitor, "跟随系统", "根据系统外观自动切换"],
-                    ["light", Sun, "亮色", "整个软件始终使用亮色"],
-                    ["dark", Moon, "暗色", "整个软件始终使用暗色"],
-                  ] as const).map(([value, Icon, label, description]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      aria-pressed={colorScheme === value}
-                      className={clsx(
-                        "relative flex min-h-28 flex-col items-start rounded-xl border p-4 text-left transition",
-                        colorScheme === value
-                          ? "border-stone-700 bg-stone-50 ring-1 ring-stone-700 dark:border-stone-300 dark:bg-stone-800 dark:ring-stone-300"
-                          : "border-stone-200 hover:border-stone-300 hover:bg-stone-50 dark:border-stone-700 dark:hover:border-stone-600 dark:hover:bg-stone-800/70",
-                      )}
-                      onClick={() => onColorSchemeChange(value)}
-                    >
-                      <Icon size={19} className="text-stone-700 dark:text-stone-300" />
-                      <span className="mt-4 text-sm font-medium text-stone-900 dark:text-stone-100">{label}</span>
-                      <span className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">{description}</span>
-                      {colorScheme === value && (
-                        <span className="absolute right-3 top-3 grid h-5 w-5 place-items-center rounded-full bg-stone-800 text-white dark:bg-stone-100 dark:text-stone-900">
-                          <Check size={12} strokeWidth={3} />
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </section>
-          </div>
+          {section === "general"
+            ? <GeneralSettings colorScheme={colorScheme} onColorSchemeChange={onColorSchemeChange} />
+            : <AboutSettings />}
         </ScrollArea.Viewport>
         <ScrollArea.Scrollbar orientation="vertical" className="flex w-2.5 touch-none select-none p-0.5">
           <ScrollArea.Thumb className="min-h-8 flex-1 rounded-full bg-stone-300 dark:bg-stone-700" />
@@ -1025,6 +1002,137 @@ function SettingsPage({
       </ScrollArea.Root>
     </main>
   );
+}
+
+function GeneralSettings({
+  colorScheme,
+  onColorSchemeChange,
+}: {
+  colorScheme: AppColorScheme;
+  onColorSchemeChange: (value: AppColorScheme) => void;
+}) {
+  return (
+    <div className="mx-auto w-full max-w-3xl px-10 py-9">
+      <div>
+        <h1 className="text-xl font-semibold text-stone-900 dark:text-stone-100">通用设置</h1>
+        <p className="mt-1.5 text-sm text-stone-500 dark:text-stone-400">调整文染的软件外观与通用行为。</p>
+      </div>
+
+      <section className="mt-8 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
+        <div className="border-b border-stone-200 px-5 py-4 dark:border-stone-700">
+          <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">外观</div>
+          <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">
+            软件主题应用于侧边栏、工具栏、菜单、设置、编辑器和系统弹窗。微信文章预览保持文章主题原本的样式。
+          </div>
+        </div>
+        <div className="px-5 py-5">
+          <div className="text-sm font-medium text-stone-800 dark:text-stone-200">软件主题</div>
+          <div className="mt-3 grid grid-cols-3 gap-3">
+            {([
+              ["system", Monitor, "跟随系统", "根据系统外观自动切换"],
+              ["light", Sun, "亮色", "整个软件始终使用亮色"],
+              ["dark", Moon, "暗色", "整个软件始终使用暗色"],
+            ] as const).map(([value, Icon, label, description]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={colorScheme === value}
+                className={clsx(
+                  "relative flex min-h-28 flex-col items-start rounded-xl border p-4 text-left transition",
+                  colorScheme === value
+                    ? "border-stone-700 bg-stone-50 ring-1 ring-stone-700 dark:border-stone-300 dark:bg-stone-800 dark:ring-stone-300"
+                    : "border-stone-200 hover:border-stone-300 hover:bg-stone-50 dark:border-stone-700 dark:hover:border-stone-600 dark:hover:bg-stone-800/70",
+                )}
+                onClick={() => onColorSchemeChange(value)}
+              >
+                <Icon size={19} className="text-stone-700 dark:text-stone-300" />
+                <span className="mt-4 text-sm font-medium text-stone-900 dark:text-stone-100">{label}</span>
+                <span className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">{description}</span>
+                {colorScheme === value && (
+                  <span className="absolute right-3 top-3 grid h-5 w-5 place-items-center rounded-full bg-stone-800 text-white dark:bg-stone-100 dark:text-stone-900">
+                    <Check size={12} strokeWidth={3} />
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AboutSettings() {
+  return (
+    <div className="mx-auto w-full max-w-3xl px-10 py-9">
+      <div>
+        <h1 className="text-xl font-semibold text-stone-900 dark:text-stone-100">关于文染</h1>
+        <p className="mt-1.5 text-sm text-stone-500 dark:text-stone-400">版本、开源项目和软件信息。</p>
+      </div>
+
+      <section className="mt-8 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
+        <div className="flex items-center gap-4 border-b border-stone-200 px-5 py-5 dark:border-stone-700">
+          <img src="/app_logo.png" alt="文染标志" className="h-16 w-16 rounded-2xl object-cover shadow-sm ring-1 ring-black/5 dark:ring-white/10" />
+          <div className="min-w-0">
+            <div className="text-lg font-semibold text-stone-900 dark:text-stone-100">文染 WenRender</div>
+            <div className="mt-1 text-sm text-stone-500 dark:text-stone-400">面向微信公众号写作场景的跨平台 Markdown 编辑器。</div>
+            <span className="mt-2 inline-flex rounded-full bg-stone-100 px-2.5 py-1 font-mono text-xs text-stone-600 dark:bg-stone-800 dark:text-stone-300">
+              版本 {packageMetadata.version}
+            </span>
+          </div>
+        </div>
+
+        <dl className="divide-y divide-stone-100 px-5 dark:divide-stone-700">
+          <AboutRow label="当前版本" value={packageMetadata.version} />
+          <AboutRow label="支持平台" value="Windows、macOS、Linux" />
+          <AboutRow label="核心技术" value="Tauri 2、React、CodeMirror 6" />
+          <AboutRow label="开源协议" value="GNU AGPL v3" />
+        </dl>
+      </section>
+
+      <section className="mt-4 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
+        <button
+          type="button"
+          onClick={() => void openExternalUrl("https://github.com/1595901624/WenRender")}
+          className="group flex items-center gap-3 px-5 py-4 transition hover:bg-stone-50 dark:hover:bg-stone-800/70"
+        >
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-200">
+            <Github size={18} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-stone-900 dark:text-stone-100">GitHub 开源仓库</span>
+            <span className="mt-0.5 block truncate text-xs text-stone-500 dark:text-stone-400">1595901624/WenRender</span>
+          </span>
+          <ExternalLink size={15} className="text-stone-400 transition group-hover:text-stone-700 dark:group-hover:text-stone-200" />
+        </button>
+      </section>
+
+      <section className="mt-4 rounded-xl border border-stone-200 bg-white px-5 py-4 dark:border-stone-700 dark:bg-[#242522]">
+        <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">数据与隐私</div>
+        <p className="mt-1.5 text-xs leading-5 text-stone-500 dark:text-stone-400">
+          文染在本地读取、编辑和渲染文章，不会主动上传文章内容。工作区状态与软件设置保存在本机。
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function AboutRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-6 py-3.5 text-sm">
+      <dt className="text-stone-500 dark:text-stone-400">{label}</dt>
+      <dd className="text-right text-stone-800 dark:text-stone-200">{value}</dd>
+    </div>
+  );
+}
+
+async function openExternalUrl(url: string) {
+  if ("__TAURI_INTERNALS__" in window) {
+    await openUrl(url);
+    return;
+  }
+  // 浏览器开发环境使用原生 window.open，桌面应用始终交给 opener 插件处理。
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function ToolbarButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {

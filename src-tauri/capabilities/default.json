@@ -9,6 +9,14 @@
     "dialog:default",
     "fs:allow-read-dir",
     "fs:allow-read-text-file",
-    "fs:allow-write-text-file"
+    "fs:allow-write-text-file",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://github.com/1595901624/WenRender"
+        }
+      ]
+    }
   ]
 }
