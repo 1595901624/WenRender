@@ -1,21 +1,40 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { AlignVerticalSpaceAround, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Palette, PanelLeftClose, PanelLeftOpen, Save, SplitSquareHorizontal } from "lucide-react";
+import { AlertTriangle, AlignVerticalSpaceAround, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Palette, PanelLeftClose, PanelLeftOpen, Save, SplitSquareHorizontal } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
 import { Preview, type PreviewHandle } from "./components/Preview";
 import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
-import { hasUnsavedChanges } from "./lib/document";
+import { hasUnsavedChanges, needsSaveAttention } from "./lib/document";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
 import { loadWorkspaceSession, saveWorkspaceSession, type WorkspaceSession } from "./lib/workspace";
-import type { DirectoryNode, Notice, OpenDirectory, OpenDocument } from "./types";
+import type { DirectoryNode, FileInspection, FileSnapshot, Notice, OpenDirectory, OpenDocument } from "./types";
+
+type SaveOutcome = {
+  status: "saved" | "conflict";
+  reason?: "modified" | "deleted";
+  snapshot?: FileSnapshot;
+};
+
+type SaveConflict = {
+  documentId: string;
+  reason: "modified" | "deleted";
+  diskSnapshot?: FileSnapshot;
+};
+
+type PendingClose = {
+  kind: "document" | "directory" | "application";
+  documentIds: string[];
+  directoryId?: string;
+};
 
 const welcome = `# 欢迎使用文染
 
@@ -38,6 +57,7 @@ function App() {
   // 启动时先显示欢迎文档；工作区恢复完成后再整体替换，避免异步恢复期间出现空状态。
   const [documents, setDocuments] = useState<OpenDocument[]>([{
     id: createId(), path: null, name: "欢迎.md", content: welcome, savedContent: welcome,
+    lineEnding: "lf", hasBom: false, readOnly: false, externalState: "normal",
   }]);
   const [directories, setDirectories] = useState<OpenDirectory[]>([]);
   const [activeId, setActiveId] = useState(documents[0].id);
@@ -53,8 +73,13 @@ function App() {
   const [outputLineHeight, setOutputLineHeight] = useState(defaultTheme.typography.bodyLineHeight);
   const [syncScroll, setSyncScroll] = useState(true);
   const [workspaceReady, setWorkspaceReady] = useState(false);
+  const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
+  const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
   const editorRef = useRef<EditorHandle>(null);
   const previewRef = useRef<PreviewHandle>(null);
+  const documentsRef = useRef(documents);
+  const allowWindowClose = useRef(false);
+  documentsRef.current = documents;
 
   // 目录需要重新扫描以反映磁盘最新状态，文件则按上次的打开顺序恢复。
   useEffect(() => {
@@ -95,6 +120,85 @@ function App() {
   }, [activeId, directories, documents, workspaceReady]);
 
   useEffect(() => {
+    if (!workspaceReady) return;
+    let checking = false;
+
+    const inspectOpenFiles = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        for (const document of documentsRef.current) {
+          if (!document.path) continue;
+          try {
+            const inspection = await invoke<FileInspection>("inspect_text_file", {
+              filePath: document.path,
+            });
+            if (!inspection.exists) {
+              setDocuments((items) => items.map((item) => (
+                item.id === document.id && item.externalState !== "deleted"
+                  ? { ...item, externalState: "deleted" }
+                  : item
+              )));
+              continue;
+            }
+
+            const diskHash = inspection.fingerprint?.hash;
+            if (!diskHash || diskHash === document.diskFingerprint?.hash) {
+              setDocuments((items) => items.map((item) => (
+                item.id === document.id
+                  && (item.readOnly !== inspection.readOnly || item.externalState !== "normal")
+                  ? { ...item, readOnly: inspection.readOnly, externalState: "normal" }
+                  : item
+              )));
+              continue;
+            }
+
+            if (hasUnsavedChanges(document)) {
+              setDocuments((items) => items.map((item) => (
+                item.id === document.id
+                  && (item.readOnly !== inspection.readOnly || item.externalState !== "modified")
+                  ? { ...item, readOnly: inspection.readOnly, externalState: "modified" }
+                  : item
+              )));
+              continue;
+            }
+
+            // 本地没有修改时，外部变化可以安全地自动加载。
+            const snapshot = await invoke<FileSnapshot>("read_file_snapshot", {
+              filePath: document.path,
+            });
+            setDocuments((items) => items.map((item) => {
+              if (item.id !== document.id || hasUnsavedChanges(item)) return item;
+              return applySnapshot(item, snapshot);
+            }));
+          } catch {
+            // 网络盘短暂不可用或文件被占用时不立即判定为删除，等待下一轮检查。
+          }
+        }
+      } finally {
+        checking = false;
+      }
+    };
+
+    void inspectOpenFiles();
+    const interval = window.setInterval(inspectOpenFiles, 2000);
+    return () => window.clearInterval(interval);
+  }, [workspaceReady]);
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow().onCloseRequested((event) => {
+      if (allowWindowClose.current) return;
+      const dirtyIds = documentsRef.current.filter(needsSaveAttention).map((document) => document.id);
+      if (dirtyIds.length === 0) return;
+      event.preventDefault();
+      setPendingClose({ kind: "application", documentIds: dirtyIds });
+    }).then((dispose) => { unlisten = dispose; });
+    return () => unlisten?.();
+  }, []);
+
+  useEffect(() => {
     window.localStorage.setItem("wenrender-theme", themeId);
   }, [themeId]);
 
@@ -133,7 +237,17 @@ function App() {
 
   const newDocument = () => {
     const id = createId();
-    setDocuments((items) => [...items, { id, path: null, name: "未命名.md", content: "", savedContent: "" }]);
+    setDocuments((items) => [...items, {
+      id,
+      path: null,
+      name: "未命名.md",
+      content: "",
+      savedContent: "",
+      lineEnding: "lf",
+      hasBom: false,
+      readOnly: false,
+      externalState: "normal",
+    }]);
     setActiveId(id);
   };
 
@@ -149,9 +263,9 @@ function App() {
           setActiveId(existing.id);
           continue;
         }
-        const content = await readTextFile(path);
+        const snapshot = await invoke<FileSnapshot>("read_file_snapshot", { filePath: path });
         const id = createId();
-        setDocuments((items) => [...items, { id, path, name: fileName(path), content, savedContent: content }]);
+        setDocuments((items) => [...items, createDocumentFromSnapshot(id, path, fileName(path), snapshot)]);
         setActiveId(id);
       }
     } catch (error) {
@@ -182,52 +296,135 @@ function App() {
     }
   };
 
-  const openTreeDocument = (node: DirectoryNode, directoryId: string) => {
-    if (!node.isMarkdown || node.content == null) return;
+  const openTreeDocument = async (node: DirectoryNode, directoryId: string) => {
+    if (!node.isMarkdown) return;
     const existing = documents.find((item) => item.path === node.path);
     if (existing) {
       setActiveId(existing.id);
       return;
     }
-    const id = createId();
-    setDocuments((items) => [...items, {
-      id,
-      path: node.path,
-      name: node.name,
-      content: node.content ?? "",
-      savedContent: node.content ?? "",
-      directoryId,
-    }]);
-    setActiveId(id);
+    try {
+      const snapshot = await invoke<FileSnapshot>("read_file_snapshot", { filePath: node.path });
+      const id = createId();
+      setDocuments((items) => [...items, {
+        ...createDocumentFromSnapshot(id, node.path, node.name, snapshot),
+        directoryId,
+      }]);
+      setActiveId(id);
+    } catch (error) {
+      notify(`打开失败：${String(error)}`, "error");
+    }
+  };
+
+  const removeDocuments = (documentIds: Set<string>) => {
+    const currentDocuments = documentsRef.current;
+    const activeIndex = currentDocuments.findIndex((item) => item.id === activeId);
+    const remaining = currentDocuments.filter((item) => !documentIds.has(item.id));
+    if (remaining.length === 0) {
+      const id = createId();
+      const replacement: OpenDocument = {
+        id,
+        path: null,
+        name: "未命名.md",
+        content: "",
+        savedContent: "",
+        lineEnding: "lf",
+        hasBom: false,
+        readOnly: false,
+        externalState: "normal",
+      };
+      documentsRef.current = [replacement];
+      setDocuments([replacement]);
+      setActiveId(id);
+      return;
+    }
+    documentsRef.current = remaining;
+    setDocuments(remaining);
+    if (documentIds.has(activeId)) {
+      setActiveId(remaining[Math.min(Math.max(0, activeIndex - 1), remaining.length - 1)].id);
+    }
+  };
+
+  const removeDirectory = (directoryId: string) => {
+    setDirectories((items) => items.filter((item) => item.id !== directoryId));
+    const removedDocumentIds = new Set(documentsRef.current.filter((item) => item.directoryId === directoryId).map((item) => item.id));
+    removeDocuments(removedDocumentIds);
   };
 
   const closeDirectory = (directoryId: string) => {
-    setDirectories((items) => items.filter((item) => item.id !== directoryId));
-    const removedDocumentIds = new Set(documents.filter((item) => item.directoryId === directoryId).map((item) => item.id));
-    const remaining = documents.filter((item) => item.directoryId !== directoryId);
-    setDocuments(remaining);
-    if (removedDocumentIds.has(activeId)) setActiveId(remaining[0].id);
+    const documentIds = documents.filter((item) => item.directoryId === directoryId).map((item) => item.id);
+    const dirtyIds = documentIds.filter((id) => {
+      const document = documents.find((item) => item.id === id);
+      return document ? needsSaveAttention(document) : false;
+    });
+    if (dirtyIds.length > 0) {
+      setPendingClose({ kind: "directory", documentIds: dirtyIds, directoryId });
+      return;
+    }
+    removeDirectory(directoryId);
+  };
+
+  const saveOneDocument = async (
+    document: OpenDocument,
+    options: { force?: boolean; saveAs?: boolean; recreate?: boolean } = {},
+  ): Promise<"saved" | "cancelled" | "conflict" | "failed"> => {
+    try {
+      const needsPath = !document.path || options.saveAs;
+      const path = needsPath
+        ? await save({ defaultPath: document.name, filters: [{ name: "Markdown", extensions: ["md"] }] })
+        : document.path;
+      if (!path) return "cancelled";
+
+      const outcome = await invoke<SaveOutcome>("save_text_file_safely", {
+        filePath: path,
+        content: document.content,
+        lineEnding: document.lineEnding,
+        hasBom: document.hasBom,
+        expectedHash: needsPath ? null : document.diskFingerprint?.hash ?? null,
+        // 系统“另存为”对目标覆盖已有确认；冲突界面的覆盖/重新创建同样是显式操作。
+        force: Boolean(options.force || needsPath),
+        allowCreate: Boolean(needsPath || options.recreate),
+      });
+
+      if (outcome.status === "conflict") {
+        setSaveConflict({
+          documentId: document.id,
+          reason: outcome.reason ?? "modified",
+          diskSnapshot: outcome.snapshot,
+        });
+        setActiveId(document.id);
+        return "conflict";
+      }
+
+      if (!outcome.snapshot) throw new Error("保存完成但未返回文件快照");
+      const updatedDocuments = documentsRef.current.map((item) => item.id === document.id
+        ? {
+          ...applySnapshot(item, outcome.snapshot!),
+          path,
+          name: fileName(path),
+          content: document.content,
+          savedContent: document.content,
+          directoryId: needsPath ? undefined : item.directoryId,
+          recoveredDraft: false,
+        }
+        : item);
+      documentsRef.current = updatedDocuments;
+      setDocuments(updatedDocuments);
+      setSaveConflict(null);
+      notify("文章已保存", "success");
+      return "saved";
+    } catch (error) {
+      notify(`保存失败：${String(error)}`, "error");
+      return "failed";
+    }
   };
 
   const saveDocument = async () => {
-    try {
-      const path = active.path ?? await save({ defaultPath: active.name, filters: [{ name: "Markdown", extensions: ["md"] }] });
-      if (!path) return;
-      if (active.path) {
-        // 文件选择器权限不会跨应用重启保留，已有文件交给后端受控命令写回。
-        await invoke("write_existing_text_file", {
-          filePath: path,
-          content: active.content,
-        });
-      } else {
-        // 新文件刚由保存对话框选定，仍可使用对话框授予的临时写权限。
-        await writeTextFile(path, active.content);
-      }
-      setDocuments((items) => items.map((item) => item.id === active.id ? { ...item, path, name: fileName(path), savedContent: item.content } : item));
-      notify("文章已保存", "success");
-    } catch (error) {
-      notify(`保存失败：${String(error)}`, "error");
-    }
+    await saveOneDocument(active);
+  };
+
+  const saveDocumentAs = async () => {
+    await saveOneDocument(active, { saveAs: true });
   };
 
   const exportHtml = async () => {
@@ -255,10 +452,83 @@ function App() {
   };
 
   const closeDocument = (id: string) => {
-    const index = documents.findIndex((item) => item.id === id);
-    const remaining = documents.filter((item) => item.id !== id);
-    setDocuments(remaining);
-    if (id === activeId) setActiveId(remaining[Math.max(0, index - 1)].id);
+    const document = documents.find((item) => item.id === id);
+    if (document && needsSaveAttention(document)) {
+      setPendingClose({ kind: "document", documentIds: [id] });
+      return;
+    }
+    removeDocuments(new Set([id]));
+  };
+
+  const finishPendingClose = async (request: PendingClose, discard = false) => {
+    setPendingClose(null);
+    if (request.kind === "application") {
+      if (discard) {
+        const discarded = documentsRef.current
+          .filter((document) => !(
+            request.documentIds.includes(document.id)
+            && document.externalState === "deleted"
+          ))
+          .map((document) => (
+            request.documentIds.includes(document.id)
+              ? { ...document, content: document.savedContent, recoveredDraft: false }
+              : document
+          ));
+        documentsRef.current = discarded;
+      }
+      saveWorkspaceSession(documentsRef.current, directories, activeId);
+      allowWindowClose.current = true;
+      await getCurrentWindow().destroy();
+      return;
+    }
+    if (request.kind === "directory" && request.directoryId) {
+      removeDirectory(request.directoryId);
+      return;
+    }
+    removeDocuments(new Set(request.documentIds));
+  };
+
+  const saveAndFinishPendingClose = async () => {
+    if (!pendingClose) return;
+    const request = pendingClose;
+    for (const id of request.documentIds) {
+      const document = documentsRef.current.find((item) => item.id === id);
+      if (!document) continue;
+      const result = await saveOneDocument(document);
+      if (result !== "saved") {
+        if (result === "conflict") setPendingClose(null);
+        return;
+      }
+    }
+    await finishPendingClose(request);
+  };
+
+  const reloadConflictFromDisk = () => {
+    if (!saveConflict?.diskSnapshot) return;
+    setDocuments((items) => items.map((item) => (
+      item.id === saveConflict.documentId
+        ? { ...applySnapshot(item, saveConflict.diskSnapshot!), recoveredDraft: false }
+        : item
+    )));
+    setSaveConflict(null);
+    notify("已重新加载磁盘版本", "success");
+  };
+
+  const overwriteConflict = async () => {
+    if (!saveConflict) return;
+    const document = documentsRef.current.find((item) => item.id === saveConflict.documentId);
+    if (!document) return;
+    await saveOneDocument(document, {
+      force: true,
+      recreate: saveConflict.reason === "deleted",
+    });
+  };
+
+  const saveConflictAs = async () => {
+    if (!saveConflict) return;
+    const document = documentsRef.current.find((item) => item.id === saveConflict.documentId);
+    if (!document) return;
+    await saveOneDocument(document, { saveAs: true });
   };
 
   useEffect(() => {
@@ -311,6 +581,18 @@ function App() {
             </button>
             <span className="ml-1 max-w-[360px] truncate text-sm font-medium text-[#272825]">{active.name}</span>
             {hasUnsavedChanges(active) && <span className="ml-2 h-1.5 w-1.5 rounded-full bg-amber-500" />}
+            {active.recoveredDraft && (
+              <span className="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700">已恢复草稿</span>
+            )}
+            {active.externalState === "modified" && (
+              <span className="rounded-md bg-orange-50 px-2 py-1 text-[10px] font-medium text-orange-700">磁盘已修改</span>
+            )}
+            {active.externalState === "deleted" && (
+              <span className="rounded-md bg-red-50 px-2 py-1 text-[10px] font-medium text-red-700">磁盘文件已删除</span>
+            )}
+            {active.readOnly && (
+              <span className="rounded-md bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-500">只读</span>
+            )}
           </div>
 
           <div className="flex items-center justify-end gap-1">
@@ -476,6 +758,7 @@ function App() {
               <DropdownMenu.Portal>
                 <DropdownMenu.Content align="end" className="z-50 min-w-44 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl">
                   <DropdownMenu.Item onSelect={exportHtml} className="menu-item"><FileDown size={15} />导出 HTML</DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={saveDocumentAs} className="menu-item"><Save size={15} />另存为 Markdown</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={newDocument} className="menu-item"><Menu size={15} />新建文章</DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
@@ -517,6 +800,75 @@ function App() {
         </main>
         </div>
 
+        {pendingClose && (
+          <div className="fixed inset-0 z-[70] grid place-items-center bg-black/25 p-5 backdrop-blur-[1px]">
+            <div role="alertdialog" aria-modal="true" className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl">
+              <div className="flex items-start gap-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-amber-50 text-amber-600">
+                  <AlertTriangle size={18} />
+                </span>
+                <div>
+                  <h2 className="text-base font-semibold text-stone-900">存在未保存的修改</h2>
+                  <p className="mt-1.5 text-sm leading-6 text-stone-500">
+                    {pendingClose.kind === "application"
+                      ? `退出前还有 ${pendingClose.documentIds.length} 个文档需要保存。`
+                      : pendingClose.kind === "directory"
+                        ? `该目录中还有 ${pendingClose.documentIds.length} 个文档需要保存。`
+                        : "关闭后，尚未保存到文件的修改将会丢失。"}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100" onClick={() => setPendingClose(null)}>取消</button>
+                <button className="rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50" onClick={() => void finishPendingClose(pendingClose, true)}>不保存</button>
+                <button className="rounded-lg bg-[#20211f] px-3.5 py-2 text-sm font-medium text-white hover:bg-black" onClick={() => void saveAndFinishPendingClose()}>保存并继续</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {saveConflict && (() => {
+          const document = documents.find((item) => item.id === saveConflict.documentId);
+          if (!document) return null;
+          return (
+            <div className="fixed inset-0 z-[80] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
+              <div role="alertdialog" aria-modal="true" className="flex max-h-[88vh] w-full max-w-5xl flex-col rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl">
+                <div className="flex items-start gap-3">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-orange-50 text-orange-600"><AlertTriangle size={18} /></span>
+                  <div>
+                    <h2 className="text-base font-semibold text-stone-900">
+                      {saveConflict.reason === "deleted" ? "磁盘文件已被删除" : "文件存在外部修改"}
+                    </h2>
+                    <p className="mt-1 text-sm text-stone-500">
+                      {saveConflict.reason === "deleted"
+                        ? "可以重新创建原文件，或者将当前内容保存到其它位置。"
+                        : "为避免覆盖其它程序的修改，保存已暂停。请比较两个版本后选择处理方式。"}
+                    </p>
+                  </div>
+                </div>
+
+                {saveConflict.diskSnapshot && (
+                  <div className="mt-4 grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-hidden">
+                    <ConflictPane title="磁盘版本" content={saveConflict.diskSnapshot.content} />
+                    <ConflictPane title="WenRender 中的版本" content={document.content} />
+                  </div>
+                )}
+
+                <div className="mt-5 flex flex-wrap justify-end gap-2">
+                  <button className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100" onClick={() => setSaveConflict(null)}>取消</button>
+                  <button className="rounded-lg px-3 py-2 text-sm text-stone-700 hover:bg-stone-100" onClick={() => void saveConflictAs()}>另存为</button>
+                  {saveConflict.diskSnapshot && (
+                    <button className="rounded-lg px-3 py-2 text-sm text-orange-700 hover:bg-orange-50" onClick={reloadConflictFromDisk}>使用磁盘版本</button>
+                  )}
+                  <button className="rounded-lg bg-[#20211f] px-3.5 py-2 text-sm font-medium text-white hover:bg-black" onClick={() => void overwriteConflict()}>
+                    {saveConflict.reason === "deleted" ? "重新创建原文件" : "使用当前版本覆盖"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {notice && (
           <div className={clsx("fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full px-4 py-2 text-sm shadow-xl", notice.tone === "error" ? "bg-red-600 text-white" : "bg-[#1f2922] text-white")}>
             {notice.tone === "success" && <Check size={15} className="text-emerald-400" />}{notice.message}
@@ -533,6 +885,15 @@ function ToolbarButton({ label, onClick, children }: { label: string; onClick: (
       <Tooltip.Trigger asChild><button className="icon-button" aria-label={label} onClick={onClick}>{children}</button></Tooltip.Trigger>
       <Tooltip.Portal><Tooltip.Content sideOffset={8} className="rounded bg-stone-900 px-2 py-1 text-xs text-white shadow">{label}</Tooltip.Content></Tooltip.Portal>
     </Tooltip.Root>
+  );
+}
+
+function ConflictPane({ title, content }: { title: string; content: string }) {
+  return (
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-stone-200 bg-stone-50">
+      <div className="shrink-0 border-b border-stone-200 px-3 py-2 text-xs font-semibold text-stone-600">{title}</div>
+      <pre className="min-h-40 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-6 text-stone-700">{content}</pre>
+    </section>
   );
 }
 
@@ -586,6 +947,14 @@ async function restoreWorkspaceSession(session: WorkspaceSession): Promise<{
         name: persisted.name,
         content: persisted.scratchContent ?? "",
         savedContent: persisted.scratchSavedContent ?? "",
+        lineEnding: "lf",
+        hasBom: false,
+        readOnly: false,
+        externalState: "normal",
+        recoveredDraft: hasUnsavedChanges({
+          content: persisted.scratchContent ?? "",
+          savedContent: persisted.scratchSavedContent ?? "",
+        }),
       });
       if (index === session.activeIndex) restoredActiveId = id;
       continue;
@@ -594,32 +963,49 @@ async function restoreWorkspaceSession(session: WorkspaceSession): Promise<{
     const directory = persisted.directoryPath
       ? directoriesByPath.get(persisted.directoryPath)
       : undefined;
-    const treeNode = directory
-      ? findNodeByPath(directory.children, persisted.path)
-      : null;
-
-    let diskContent = treeNode?.content ?? null;
-    if (diskContent == null) {
-      try {
-        // 重启后文件选择器授予的临时权限已失效，改由受控的 Tauri 命令重新读取。
-        diskContent = await invoke<string>("read_text_file", {
-          filePath: persisted.path,
-        });
-      } catch {
-        continue;
-      }
-    }
-
     const id = createId();
-    restoredDocuments.push({
-      id,
-      path: persisted.path,
-      name: fileName(persisted.path),
-      // 草稿只覆盖编辑区内容，savedContent 始终来自磁盘，便于继续显示未保存状态。
-      content: persisted.draftContent ?? diskContent,
-      savedContent: diskContent,
-      directoryId: directory?.id,
-    });
+    try {
+      const snapshot = await invoke<FileSnapshot>("read_file_snapshot", {
+        filePath: persisted.path,
+      });
+      const document = createDocumentFromSnapshot(id, persisted.path, fileName(persisted.path), snapshot);
+      const restoredDraft = persisted.draftContent;
+      const diskChangedWhileClosed = Boolean(
+        restoredDraft
+        && persisted.baseHash
+        && persisted.baseHash !== snapshot.fingerprint.hash,
+      );
+      restoredDocuments.push({
+        ...document,
+        content: restoredDraft ?? snapshot.content,
+        // 草稿基于旧磁盘版本时保留旧哈希，下一次保存会进入冲突处理。
+        diskFingerprint: diskChangedWhileClosed
+          ? { ...snapshot.fingerprint, hash: persisted.baseHash! }
+          : snapshot.fingerprint,
+        externalState: diskChangedWhileClosed ? "modified" : "normal",
+        recoveredDraft: restoredDraft !== undefined,
+        directoryId: directory?.id,
+      });
+    } catch {
+      // 文件在应用关闭期间被删除时仍保留未保存草稿，避免用户内容丢失。
+      if (persisted.draftContent === undefined) continue;
+      restoredDocuments.push({
+        id,
+        path: persisted.path,
+        name: fileName(persisted.path),
+        content: persisted.draftContent,
+        savedContent: "",
+        diskFingerprint: persisted.baseHash
+          ? { size: 0, modifiedMs: 0, hash: persisted.baseHash }
+          : undefined,
+        lineEnding: "lf",
+        hasBom: false,
+        readOnly: false,
+        externalState: "deleted",
+        recoveredDraft: true,
+        directoryId: directory?.id,
+      });
+    }
     if (index === session.activeIndex) restoredActiveId = id;
   }
 
@@ -630,15 +1016,37 @@ async function restoreWorkspaceSession(session: WorkspaceSession): Promise<{
   };
 }
 
-function findNodeByPath(nodes: DirectoryNode[], path: string): DirectoryNode | null {
-  for (const node of nodes) {
-    if (node.path === path) return node;
-    if (node.isDirectory) {
-      const nested = findNodeByPath(node.children, path);
-      if (nested) return nested;
-    }
-  }
-  return null;
+function createDocumentFromSnapshot(
+  id: string,
+  path: string,
+  name: string,
+  snapshot: FileSnapshot,
+): OpenDocument {
+  return {
+    id,
+    path,
+    name,
+    content: snapshot.content,
+    savedContent: snapshot.content,
+    diskFingerprint: snapshot.fingerprint,
+    lineEnding: snapshot.lineEnding,
+    hasBom: snapshot.hasBom,
+    readOnly: snapshot.readOnly,
+    externalState: "normal",
+  };
+}
+
+function applySnapshot(document: OpenDocument, snapshot: FileSnapshot): OpenDocument {
+  return {
+    ...document,
+    content: snapshot.content,
+    savedContent: snapshot.content,
+    diskFingerprint: snapshot.fingerprint,
+    lineEnding: snapshot.lineEnding,
+    hasBom: snapshot.hasBom,
+    readOnly: snapshot.readOnly,
+    externalState: "normal",
+  };
 }
 
 function resolveArticleImage(source: string, documentPath: string | null): string {

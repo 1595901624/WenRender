@@ -1,5 +1,5 @@
 import type { OpenDirectory, OpenDocument } from "../types";
-import { hasUnsavedChanges } from "./document";
+import { needsSaveAttention } from "./document";
 
 const workspaceStorageKey = "wenrender-workspace-v1";
 
@@ -9,6 +9,8 @@ export type PersistedDocument = {
   name: string;
   directoryPath?: string;
   draftContent?: string;
+  // 草稿基于哪个磁盘版本产生，用于重启后继续检测外部编辑冲突。
+  baseHash?: string;
   scratchContent?: string;
   scratchSavedContent?: string;
 };
@@ -60,7 +62,8 @@ export function saveWorkspaceSession(
         path: document.path,
         name: document.name,
         directoryPath,
-        draftContent: hasUnsavedChanges(document) ? document.content : undefined,
+        draftContent: needsSaveAttention(document) ? document.content : undefined,
+        baseHash: needsSaveAttention(document) ? document.diskFingerprint?.hash : undefined,
       };
     }
 

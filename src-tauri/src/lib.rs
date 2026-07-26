@@ -1,5 +1,8 @@
 use serde::Serialize;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +21,40 @@ struct DirectoryTree {
     path: String,
     name: String,
     children: Vec<DirectoryNode>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileFingerprint {
+    size: u64,
+    modified_ms: u64,
+    hash: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileSnapshot {
+    content: String,
+    fingerprint: FileFingerprint,
+    line_ending: String,
+    has_bom: bool,
+    read_only: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileInspection {
+    exists: bool,
+    fingerprint: Option<FileFingerprint>,
+    read_only: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveOutcome {
+    status: String,
+    reason: Option<String>,
+    snapshot: Option<FileSnapshot>,
 }
 
 #[tauri::command]
@@ -53,14 +90,193 @@ fn read_text_file(file_path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn write_existing_text_file(file_path: String, content: String) -> Result<(), String> {
-    // 只允许覆盖已经存在的普通文件；新建文件必须先经过系统保存对话框。
+fn read_file_snapshot(file_path: String) -> Result<FileSnapshot, String> {
     let path = PathBuf::from(file_path);
-    if !path.is_file() {
-        return Err("所选路径不是已存在的文件".to_string());
+    read_snapshot(&path)
+}
+
+#[tauri::command]
+fn inspect_text_file(file_path: String) -> Result<FileInspection, String> {
+    let path = PathBuf::from(file_path);
+    if !path.exists() {
+        return Ok(FileInspection {
+            exists: false,
+            fingerprint: None,
+            read_only: false,
+        });
     }
-    std::fs::write(&path, content)
-        .map_err(|error| format!("无法保存文件 {}：{error}", path.display()))
+    if !path.is_file() {
+        return Err(format!("路径不是普通文件：{}", path.display()));
+    }
+
+    let bytes =
+        fs::read(&path).map_err(|error| format!("无法检查文件 {}：{error}", path.display()))?;
+    let metadata = fs::metadata(&path)
+        .map_err(|error| format!("无法读取文件信息 {}：{error}", path.display()))?;
+    Ok(FileInspection {
+        exists: true,
+        fingerprint: Some(fingerprint(&bytes, &metadata)),
+        read_only: metadata.permissions().readonly(),
+    })
+}
+
+#[tauri::command]
+fn save_text_file_safely(
+    file_path: String,
+    content: String,
+    line_ending: String,
+    has_bom: bool,
+    expected_hash: Option<String>,
+    force: bool,
+    allow_create: bool,
+) -> Result<SaveOutcome, String> {
+    let path = PathBuf::from(file_path);
+    let existing = path.is_file();
+
+    if !existing && !allow_create {
+        return Ok(SaveOutcome {
+            status: "conflict".to_string(),
+            reason: Some("deleted".to_string()),
+            snapshot: None,
+        });
+    }
+
+    if existing {
+        let current = read_snapshot(&path)?;
+        if current.read_only {
+            return Err(format!("文件为只读，无法保存：{}", path.display()));
+        }
+        if !force
+            && expected_hash
+                .as_ref()
+                .is_some_and(|expected| expected != &current.fingerprint.hash)
+        {
+            return Ok(SaveOutcome {
+                status: "conflict".to_string(),
+                reason: Some("modified".to_string()),
+                snapshot: Some(current),
+            });
+        }
+    }
+
+    let bytes = encode_content(&content, &line_ending, has_bom);
+    safe_write(&path, &bytes)?;
+    Ok(SaveOutcome {
+        status: "saved".to_string(),
+        reason: None,
+        snapshot: Some(read_snapshot(&path)?),
+    })
+}
+
+fn read_snapshot(path: &Path) -> Result<FileSnapshot, String> {
+    if !path.is_file() {
+        return Err(format!("所选路径不是文件：{}", path.display()));
+    }
+    let bytes =
+        fs::read(path).map_err(|error| format!("无法读取文件 {}：{error}", path.display()))?;
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("无法读取文件信息 {}：{error}", path.display()))?;
+    let has_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
+    let text_bytes = if has_bom { &bytes[3..] } else { &bytes };
+    let raw = String::from_utf8(text_bytes.to_vec())
+        .map_err(|_| format!("文件不是有效的 UTF-8 文本：{}", path.display()))?;
+    let line_ending = if raw.contains("\r\n") { "crlf" } else { "lf" };
+    let content = normalize_line_endings(&raw);
+
+    Ok(FileSnapshot {
+        content,
+        fingerprint: fingerprint(&bytes, &metadata),
+        line_ending: line_ending.to_string(),
+        has_bom,
+        read_only: metadata.permissions().readonly(),
+    })
+}
+
+fn fingerprint(bytes: &[u8], metadata: &fs::Metadata) -> FileFingerprint {
+    // FNV-1a 足以检测本地文本文件是否变化，结果稳定且无需额外依赖。
+    let hash = bytes.iter().fold(0xcbf29ce484222325_u64, |value, byte| {
+        (value ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    });
+    let modified_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or_default();
+    FileFingerprint {
+        size: metadata.len(),
+        modified_ms,
+        hash: format!("{hash:016x}"),
+    }
+}
+
+fn normalize_line_endings(content: &str) -> String {
+    content.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn encode_content(content: &str, line_ending: &str, has_bom: bool) -> Vec<u8> {
+    let normalized = normalize_line_endings(content);
+    let output = if line_ending == "crlf" {
+        normalized.replace('\n', "\r\n")
+    } else {
+        normalized
+    };
+    let mut bytes = Vec::with_capacity(output.len() + usize::from(has_bom) * 3);
+    if has_bom {
+        bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    }
+    bytes.extend_from_slice(output.as_bytes());
+    bytes
+}
+
+fn safe_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("无法确定文件目录：{}", path.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("文件名无效：{}", path.display()))?;
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let temporary = parent.join(format!(".{file_name}.wenrender-{unique}.tmp"));
+    let backup = parent.join(format!(".{file_name}.wenrender-{unique}.bak"));
+
+    let mut temporary_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| format!("无法创建临时文件 {}：{error}", temporary.display()))?;
+    if let Err(error) = temporary_file
+        .write_all(bytes)
+        .and_then(|_| temporary_file.sync_all())
+    {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("无法写入临时文件 {}：{error}", temporary.display()));
+    }
+    drop(temporary_file);
+
+    if path.exists() {
+        if let Ok(metadata) = fs::metadata(path) {
+            let _ = fs::set_permissions(&temporary, metadata.permissions());
+        }
+        fs::rename(path, &backup)
+            .map_err(|error| format!("无法备份原文件 {}：{error}", path.display()))?;
+    }
+
+    if let Err(error) = fs::rename(&temporary, path) {
+        if backup.exists() {
+            let _ = fs::rename(&backup, path);
+        }
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("无法替换文件 {}：{error}", path.display()));
+    }
+    if backup.exists() {
+        let _ = fs::remove_file(backup);
+    }
+    Ok(())
 }
 
 fn collect_directory_entries(directory: &Path) -> Result<Vec<DirectoryNode>, String> {
@@ -140,7 +356,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_directory,
             read_text_file,
-            write_existing_text_file
+            read_file_snapshot,
+            inspect_text_file,
+            save_text_file_safely
         ])
         .run(tauri::generate_context!())
         .expect("error while running WenRender");
@@ -192,19 +410,78 @@ mod tests {
 
     #[test]
     fn writes_an_existing_text_file() {
-        let path = std::env::temp_dir().join(format!(
-            "wenrender-write-test-{}.md",
-            std::process::id()
-        ));
-        std::fs::write(&path, "before").expect("create temporary file");
+        let path =
+            std::env::temp_dir().join(format!("wenrender-write-test-{}.md", std::process::id()));
+        std::fs::write(&path, b"\xEF\xBB\xBFbefore\r\nline").expect("create temporary file");
+        let before = read_snapshot(&path).expect("read initial snapshot");
 
-        write_existing_text_file(path.to_string_lossy().into_owned(), "after".to_string())
-            .expect("write existing file");
+        let outcome = save_text_file_safely(
+            path.to_string_lossy().into_owned(),
+            "after\nline".to_string(),
+            "crlf".to_string(),
+            true,
+            Some(before.fingerprint.hash),
+            false,
+            false,
+        )
+        .expect("write existing file");
+        assert_eq!(outcome.status, "saved");
         assert_eq!(
-            std::fs::read_to_string(&path).expect("read temporary file"),
-            "after"
+            std::fs::read(&path).expect("read temporary file"),
+            b"\xEF\xBB\xBFafter\r\nline"
         );
 
         std::fs::remove_file(path).expect("remove temporary file");
+    }
+
+    #[test]
+    fn detects_a_save_conflict() {
+        let path =
+            std::env::temp_dir().join(format!("wenrender-conflict-test-{}.md", std::process::id()));
+        std::fs::write(&path, "original").expect("create temporary file");
+        let original = read_snapshot(&path).expect("read initial snapshot");
+        std::fs::write(&path, "external").expect("simulate external edit");
+
+        let outcome = save_text_file_safely(
+            path.to_string_lossy().into_owned(),
+            "local".to_string(),
+            "lf".to_string(),
+            false,
+            Some(original.fingerprint.hash),
+            false,
+            false,
+        )
+        .expect("return conflict");
+        assert_eq!(outcome.status, "conflict");
+        assert_eq!(outcome.reason.as_deref(), Some("modified"));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read unchanged external file"),
+            "external"
+        );
+
+        std::fs::remove_file(path).expect("remove temporary file");
+    }
+
+    #[test]
+    fn detects_a_file_deleted_before_save() {
+        let path =
+            std::env::temp_dir().join(format!("wenrender-deleted-test-{}.md", std::process::id()));
+        std::fs::write(&path, "original").expect("create temporary file");
+        let original = read_snapshot(&path).expect("read initial snapshot");
+        std::fs::remove_file(&path).expect("simulate external delete");
+
+        let outcome = save_text_file_safely(
+            path.to_string_lossy().into_owned(),
+            "local".to_string(),
+            "lf".to_string(),
+            false,
+            Some(original.fingerprint.hash),
+            false,
+            false,
+        )
+        .expect("return deleted conflict");
+        assert_eq!(outcome.status, "conflict");
+        assert_eq!(outcome.reason.as_deref(), Some("deleted"));
+        assert!(!path.exists());
     }
 }

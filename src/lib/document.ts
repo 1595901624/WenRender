@@ -8,6 +8,13 @@ export function hasUnsavedChanges(document: Pick<OpenDocument, "content" | "save
   return normalizeLineEndings(document.content) !== normalizeLineEndings(document.savedContent);
 }
 
+/** 外部删除后的内存副本也必须进入草稿与关闭确认，避免最后一份内容丢失。 */
+export function needsSaveAttention(
+  document: Pick<OpenDocument, "content" | "savedContent" | "externalState">,
+): boolean {
+  return hasUnsavedChanges(document) || document.externalState === "deleted";
+}
+
 function normalizeLineEndings(content: string): string {
   return content.replace(/\r\n?/g, "\n");
 }

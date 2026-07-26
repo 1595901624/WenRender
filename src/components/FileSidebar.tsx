@@ -128,6 +128,12 @@ export function FileSidebar({
                   <FileText size={15} className={clsx("shrink-0", document.id === activeId ? "text-stone-800" : "text-stone-400")} />
                   <span className="min-w-0 flex-1 truncate">{document.name}</span>
                   {dirty && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
+                  {document.externalState !== "normal" && (
+                    <span
+                      className={clsx("h-1.5 w-1.5 rounded-full", document.externalState === "deleted" ? "bg-red-500" : "bg-orange-500")}
+                      title={document.externalState === "deleted" ? "磁盘文件已删除" : "磁盘文件已被外部修改"}
+                    />
+                  )}
                   {standaloneDocuments.length > 1 && (
                     <span
                       role="button"
@@ -188,6 +194,7 @@ export function FileSidebar({
                       expanded={expanded}
                       showAllFiles={showAllFiles}
                       activePath={activePath}
+                      documents={documents}
                       onToggle={toggleExpanded}
                       onSelect={onSelectTreeFile}
                     />
@@ -212,6 +219,7 @@ function DirectoryNodes({
   expanded,
   showAllFiles,
   activePath,
+  documents,
   onToggle,
   onSelect,
 }: {
@@ -221,6 +229,7 @@ function DirectoryNodes({
   expanded: Set<string>;
   showAllFiles: boolean;
   activePath: string | null;
+  documents: OpenDocument[];
   onToggle: (path: string) => void;
   onSelect: (node: DirectoryNode, directoryId: string) => void;
 }) {
@@ -253,6 +262,7 @@ function DirectoryNodes({
                   expanded={expanded}
                   showAllFiles={showAllFiles}
                   activePath={activePath}
+                  documents={documents}
                   onToggle={onToggle}
                   onSelect={onSelect}
                 />
@@ -261,6 +271,7 @@ function DirectoryNodes({
           );
         }
 
+        const openDocument = documents.find((document) => document.path === node.path);
         return (
           <button
             key={node.path}
@@ -279,6 +290,10 @@ function DirectoryNodes({
           >
             {node.isMarkdown ? <FileCode2 size={14} className="shrink-0" /> : <File size={14} className="shrink-0" />}
             <span className="min-w-0 flex-1 truncate">{node.name}</span>
+            {openDocument && hasUnsavedChanges(openDocument) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />}
+            {openDocument?.externalState !== undefined && openDocument.externalState !== "normal" && (
+              <span className={clsx("h-1.5 w-1.5 shrink-0 rounded-full", openDocument.externalState === "deleted" ? "bg-red-500" : "bg-orange-500")} />
+            )}
           </button>
         );
       })}
