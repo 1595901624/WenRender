@@ -130,7 +130,7 @@
 
 开始前需要安装以下环境：
 
-- Node.js 和 npm。
+- Node.js 和 pnpm。
 - Rust 稳定版工具链。
 - Tauri 2 对应操作系统所需的系统依赖。
 
@@ -139,19 +139,19 @@
 ### 安装依赖
 
 ```bash
-npm install
+pnpm install
 ```
 
 ### 启动桌面应用
 
 ```bash
-npm run tauri dev
+pnpm tauri dev
 ```
 
 ### 仅启动前端页面
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 仅启动前端页面时，文件选择、目录扫描和本地文件读取等 Tauri 功能不可用。
@@ -159,7 +159,7 @@ npm run dev
 ### 检查前端构建
 
 ```bash
-npm run build
+pnpm build
 ```
 
 ### 运行 Rust 测试
@@ -171,7 +171,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ### 构建安装包
 
 ```bash
-npm run tauri build
+pnpm tauri build
 ```
 
 构建产物会生成在 `src-tauri/target/release/bundle` 目录中。
