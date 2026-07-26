@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "文染 WenRender",
+  "productName": "文染",
   "version": "0.1.0",
   "identifier": "com.haoyu.wenrender",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "文染 WenRender",
+        "title": "文染",
         "width": 1200,
         "height": 700,
         "minWidth": 1000,
