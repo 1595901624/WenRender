@@ -82,6 +82,7 @@ function App() {
     const saved = window.localStorage.getItem("wenrender-color-scheme");
     return saved === "light" || saved === "dark" ? saved : "system";
   });
+  const [darkInterface, setDarkInterface] = useState(() => document.documentElement.classList.contains("dark"));
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
   const editorRef = useRef<EditorHandle>(null);
@@ -225,12 +226,13 @@ function App() {
       const dark = colorScheme === "dark" || (colorScheme === "system" && media.matches);
       document.documentElement.classList.toggle("dark", dark);
       document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      setDarkInterface(dark);
     };
     window.localStorage.setItem("wenrender-color-scheme", colorScheme);
     // 同步 Tauri 原生窗口主题，使系统标题栏也与软件主题保持一致。
-    void getCurrentWindow().setTheme(colorScheme === "system" ? null : colorScheme).catch(() => {
-      // 浏览器开发环境不提供原生窗口时，网页界面仍可正常切换主题。
-    });
+    if ("__TAURI_INTERNALS__" in window) {
+      void getCurrentWindow().setTheme(colorScheme === "system" ? null : colorScheme);
+    }
     applyColorScheme();
     media.addEventListener("change", applyColorScheme);
     return () => media.removeEventListener("change", applyColorScheme);
@@ -846,6 +848,7 @@ function App() {
                     ref={editorRef}
                     key={active.id}
                     value={active.content}
+                    dark={darkInterface}
                     onChange={updateActive}
                     onScrollRatio={(ratio) => { if (syncScroll) previewRef.current?.scrollToRatio(ratio); }}
                   />
