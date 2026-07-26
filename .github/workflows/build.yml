@@ -1,0 +1,90 @@
+name: 构建三端安装包
+
+on:
+  workflow_dispatch:
+
+# 同一版本只允许一个工作流运行，避免重复创建 Release 或上传同名文件。
+concurrency:
+  group: wenrender-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建 ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            platform: windows-latest
+            rust-targets: ""
+            args: "--bundles msi,nsis"
+          - name: macOS
+            platform: macos-14
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            args: "--target universal-apple-darwin --bundles dmg"
+          - name: Linux
+            platform: ubuntu-22.04
+            rust-targets: ""
+            args: "--bundles deb,appimage"
+
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.1
+          run_install: false
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: 缓存 Rust 构建产物
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: 安装 Linux 系统依赖
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建并上传安装包
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 没有 Apple 开发者证书时使用临时签名，避免 Apple Silicon 将下载的应用判定为损坏。
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-14' && '-' || '' }}
+        with:
+          args: ${{ matrix.args }}
+          retryAttempts: 2
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: "WenRender-[platform]-[arch]-[bundle]"
+          releaseAssetNamePattern: "WenRender_[version]_[platform]_[arch][setup][ext]"
+          # 手动运行时只生成 Actions 产物；推送 v* 标签时额外创建草稿 Release。
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('文染 WenRender {0}', github.ref_name) || '' }}
+          releaseBody: "文染 WenRender 跨平台安装包。"
+          releaseDraft: true
+          prerelease: false
+          generateReleaseNotes: true
