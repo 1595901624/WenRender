@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "文染 WenRender",
         "width": 1200,
         "height": 700,

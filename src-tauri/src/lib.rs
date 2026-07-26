@@ -361,6 +361,16 @@ pub fn run() {
             inspect_text_file,
             save_text_file_safely
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                // 退出app
+                // info!("window close requested: {}", window.label());
+                if window.label() == "main" {
+                    // info!("main window close requested, exiting app");
+                    std::process::exit(0);
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running WenRender");
 }
