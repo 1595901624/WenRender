@@ -5,7 +5,8 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { AlertTriangle, AlignVerticalSpaceAround, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Palette, PanelLeftClose, PanelLeftOpen, Save, SplitSquareHorizontal } from "lucide-react";
+import * as ScrollArea from "@radix-ui/react-scroll-area";
+import { AlertTriangle, AlignVerticalSpaceAround, ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Monitor, Moon, Palette, PanelLeftClose, PanelLeftOpen, Save, Settings, SplitSquareHorizontal, Sun } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
@@ -35,6 +36,9 @@ type PendingClose = {
   documentIds: string[];
   directoryId?: string;
 };
+
+type AppColorScheme = "system" | "light" | "dark";
+type AppPage = "workspace" | "settings";
 
 const welcome = `# 欢迎使用文染
 
@@ -73,6 +77,11 @@ function App() {
   const [outputLineHeight, setOutputLineHeight] = useState(defaultTheme.typography.bodyLineHeight);
   const [syncScroll, setSyncScroll] = useState(true);
   const [workspaceReady, setWorkspaceReady] = useState(false);
+  const [activePage, setActivePage] = useState<AppPage>("workspace");
+  const [colorScheme, setColorScheme] = useState<AppColorScheme>(() => {
+    const saved = window.localStorage.getItem("wenrender-color-scheme");
+    return saved === "light" || saved === "dark" ? saved : "system";
+  });
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
   const editorRef = useRef<EditorHandle>(null);
@@ -209,6 +218,23 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem("wenrender-sidebar-open", String(sidebarOpen));
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyColorScheme = () => {
+      const dark = colorScheme === "dark" || (colorScheme === "system" && media.matches);
+      document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    };
+    window.localStorage.setItem("wenrender-color-scheme", colorScheme);
+    // 同步 Tauri 原生窗口主题，使系统标题栏也与软件主题保持一致。
+    void getCurrentWindow().setTheme(colorScheme === "system" ? null : colorScheme).catch(() => {
+      // 浏览器开发环境不提供原生窗口时，网页界面仍可正常切换主题。
+    });
+    applyColorScheme();
+    media.addEventListener("change", applyColorScheme);
+    return () => media.removeEventListener("change", applyColorScheme);
+  }, [colorScheme]);
 
   const active = documents.find((document) => document.id === activeId) ?? documents[0];
   const baseTheme = articleThemes.find((item) => item.id === themeId) ?? defaultTheme;
@@ -552,24 +578,56 @@ function App() {
 
   return (
     <Tooltip.Provider delayDuration={350}>
-      <div className="flex h-screen min-w-[900px] overflow-hidden bg-[#f3f3f1] text-ink">
+      <div className="flex h-screen min-w-[900px] overflow-hidden bg-[#f3f3f1] text-ink dark:bg-[#171815] dark:text-stone-100">
         {sidebarOpen && (
           <FileSidebar
             documents={documents}
             directories={directories}
             activeId={activeId}
             activePath={active.path}
-            onSelect={setActiveId}
-            onSelectTreeFile={openTreeDocument}
+            onSelect={(id) => {
+              setActiveId(id);
+              setActivePage("workspace");
+            }}
+            onSelectTreeFile={(node, directoryId) => {
+              setActivePage("workspace");
+              void openTreeDocument(node, directoryId);
+            }}
             onClose={closeDocument}
             onCloseDirectory={closeDirectory}
-            onNew={newDocument}
-            onOpenFiles={openDocument}
-            onOpenFolder={openDirectory}
+            onNew={() => {
+              newDocument();
+              setActivePage("workspace");
+            }}
+            onOpenFiles={() => {
+              setActivePage("workspace");
+              void openDocument();
+            }}
+            onOpenFolder={() => {
+              setActivePage("workspace");
+              void openDirectory();
+            }}
           />
         )}
-        <div className={clsx("m-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-black/10 bg-white shadow-sm", sidebarOpen && "ml-0")}>
-        <header className="flex h-14 shrink-0 items-center border-b border-stone-200 bg-white px-3">
+        <div className={clsx("m-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-black/10 bg-white shadow-sm dark:border-white/10 dark:bg-[#20211f]", sidebarOpen && "ml-0")}>
+        <header className="flex h-14 shrink-0 items-center border-b border-stone-200 bg-white px-3 dark:border-stone-700 dark:bg-[#20211f]">
+          {activePage === "settings" ? (
+            <>
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <button className="icon-button" onClick={() => setActivePage("workspace")} aria-label="返回编辑器">
+                  <ArrowLeft size={18} />
+                </button>
+                <span className="ml-1 text-sm font-semibold text-[#272825] dark:text-stone-100">设置</span>
+              </div>
+              <button
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-stone-600 transition hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
+                onClick={() => setActivePage("workspace")}
+              >
+                返回编辑器
+              </button>
+            </>
+          ) : (
+          <>
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <button
               className="icon-button"
@@ -579,40 +637,41 @@ function App() {
             >
               {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
             </button>
-            <span className="ml-1 max-w-[360px] truncate text-sm font-medium text-[#272825]">{active.name}</span>
+            <span className="ml-1 max-w-[360px] truncate text-sm font-medium text-[#272825] dark:text-stone-100">{active.name}</span>
             {hasUnsavedChanges(active) && <span className="ml-2 h-1.5 w-1.5 rounded-full bg-amber-500" />}
             {active.recoveredDraft && (
-              <span className="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700">已恢复草稿</span>
+              <span className="rounded-md bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">已恢复草稿</span>
             )}
             {active.externalState === "modified" && (
-              <span className="rounded-md bg-orange-50 px-2 py-1 text-[10px] font-medium text-orange-700">磁盘已修改</span>
+              <span className="rounded-md bg-orange-50 px-2 py-1 text-[10px] font-medium text-orange-700 dark:bg-orange-950/50 dark:text-orange-300">磁盘已修改</span>
             )}
             {active.externalState === "deleted" && (
-              <span className="rounded-md bg-red-50 px-2 py-1 text-[10px] font-medium text-red-700">磁盘文件已删除</span>
+              <span className="rounded-md bg-red-50 px-2 py-1 text-[10px] font-medium text-red-700 dark:bg-red-950/50 dark:text-red-300">磁盘文件已删除</span>
             )}
             {active.readOnly && (
-              <span className="rounded-md bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-500">只读</span>
+              <span className="rounded-md bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-500 dark:bg-stone-800 dark:text-stone-400">只读</span>
             )}
           </div>
 
           <div className="flex items-center justify-end gap-1">
             <ToolbarButton label="打开文件" onClick={openDocument}><FolderOpen size={17} /></ToolbarButton>
             <ToolbarButton label="保存" onClick={saveDocument}><Save size={17} /></ToolbarButton>
-            <div className="mx-1 h-5 w-px bg-stone-200" />
+            <ToolbarButton label="设置" onClick={() => setActivePage("settings")}><Settings size={17} /></ToolbarButton>
+            <div className="mx-1 h-5 w-px bg-stone-200 dark:bg-stone-700" />
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
-                <button className="inline-flex h-8 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100">
+                <button className="inline-flex h-8 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800">
                   <Palette size={15} /><span>{theme.name}</span><ChevronDown size={13} className="text-stone-400" />
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 max-h-[min(560px,calc(100vh-72px))] w-[520px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-2xl border border-stone-200 bg-white p-2.5 shadow-[0_18px_50px_rgba(28,25,23,0.16)]">
+                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 max-h-[min(560px,calc(100vh-72px))] w-[520px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-2xl border border-stone-200 bg-white p-2.5 shadow-[0_18px_50px_rgba(28,25,23,0.16)] dark:border-stone-700 dark:bg-[#292a27]">
                   <div className="flex items-center justify-between px-2 pb-2.5 pt-1">
                     <div>
-                      <div className="text-sm font-semibold text-stone-800">文章主题</div>
+                      <div className="text-sm font-semibold text-stone-800 dark:text-stone-100">文章主题</div>
                       <div className="mt-0.5 text-[11px] text-stone-400">选择后将立即应用到预览和导出内容</div>
                     </div>
-                    <span className="rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-500">{articleThemes.length} 款内置</span>
+                    <span className="rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-500 dark:bg-stone-800 dark:text-stone-400">{articleThemes.length} 款内置</span>
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
                     {articleThemes.map((item) => (
@@ -620,8 +679,10 @@ function App() {
                         key={item.id}
                         onSelect={() => setThemeId(item.id)}
                         className={clsx(
-                          "group relative flex cursor-default items-center gap-3 rounded-xl border p-2.5 outline-none transition focus:bg-stone-50",
-                          item.id === themeId ? "border-stone-300 bg-stone-50" : "border-transparent hover:border-stone-200",
+                          "group relative flex cursor-default items-center gap-3 rounded-xl border p-2.5 outline-none transition focus:bg-stone-50 dark:focus:bg-stone-800",
+                          item.id === themeId
+                            ? "border-stone-300 bg-stone-50 dark:border-stone-600 dark:bg-stone-800"
+                            : "border-transparent hover:border-stone-200 dark:hover:border-stone-700",
                         )}
                       >
                         <div
@@ -636,7 +697,7 @@ function App() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
-                            <span className="truncate text-sm font-medium text-stone-800">{item.name}</span>
+                            <span className="truncate text-sm font-medium text-stone-800 dark:text-stone-100">{item.name}</span>
                             <span className="flex shrink-0 overflow-hidden rounded-full ring-1 ring-black/5">
                               {item.swatches.map((color) => <span key={color} className="h-2.5 w-2.5" style={{ backgroundColor: color }} />)}
                             </span>
@@ -644,7 +705,7 @@ function App() {
                           <div className="mt-1 truncate text-[11px] text-stone-400">{item.description}</div>
                         </div>
                         {item.id === themeId && (
-                          <span className="absolute right-2 top-2 grid h-4 w-4 place-items-center rounded-full bg-stone-800 text-white">
+                          <span className="absolute right-2 top-2 grid h-4 w-4 place-items-center rounded-full bg-stone-800 text-white dark:bg-stone-100 dark:text-stone-900">
                             <Check size={10} strokeWidth={3} />
                           </span>
                         )}
@@ -657,7 +718,7 @@ function App() {
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button
-                  className="inline-flex h-8 max-w-36 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100"
+                  className="inline-flex h-8 max-w-36 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
                   title="选择代码高亮主题"
                 >
                   <Braces size={15} className="shrink-0" />
@@ -666,9 +727,9 @@ function App() {
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-72 rounded-2xl border border-stone-200 bg-white p-2.5 shadow-[0_18px_50px_rgba(28,25,23,0.16)]">
+                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-72 rounded-2xl border border-stone-200 bg-white p-2.5 shadow-[0_18px_50px_rgba(28,25,23,0.16)] dark:border-stone-700 dark:bg-[#292a27]">
                   <div className="px-2 pb-2.5 pt-1">
-                    <div className="text-sm font-semibold text-stone-800">代码主题</div>
+                    <div className="text-sm font-semibold text-stone-800 dark:text-stone-100">代码主题</div>
                     <div className="mt-0.5 text-[11px] text-stone-400">使用 Highlight.js 官方配色</div>
                   </div>
                   <div className="space-y-1">
@@ -678,7 +739,9 @@ function App() {
                         onSelect={() => setCodeThemeId(item.id)}
                         className={clsx(
                           "flex cursor-default items-center gap-3 rounded-xl border p-2 outline-none transition",
-                          item.id === codeThemeId ? "border-stone-300 bg-stone-50" : "border-transparent focus:bg-stone-50",
+                          item.id === codeThemeId
+                            ? "border-stone-300 bg-stone-50 dark:border-stone-600 dark:bg-stone-800"
+                            : "border-transparent focus:bg-stone-50 dark:focus:bg-stone-800",
                         )}
                       >
                         <div
@@ -693,7 +756,7 @@ function App() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
-                            <span className="truncate text-sm font-medium text-stone-800">{item.name}</span>
+                            <span className="truncate text-sm font-medium text-stone-800 dark:text-stone-100">{item.name}</span>
                             <span className="flex shrink-0 overflow-hidden rounded-full ring-1 ring-black/5">
                               {item.swatches.map((color) => (
                                 <span key={color} className="h-2.5 w-2.5" style={{ backgroundColor: color }} />
@@ -702,7 +765,7 @@ function App() {
                           </div>
                           <div className="mt-0.5 truncate text-[11px] text-stone-400">{item.description}</div>
                         </div>
-                        {item.id === codeThemeId && <Check size={15} className="shrink-0 text-stone-800" />}
+                        {item.id === codeThemeId && <Check size={15} className="shrink-0 text-stone-800 dark:text-stone-100" />}
                       </DropdownMenu.Item>
                     ))}
                   </div>
@@ -712,7 +775,7 @@ function App() {
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-stone-600 transition hover:bg-stone-100"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-stone-600 transition hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
                   title="设置输出正文行高"
                 >
                   <AlignVerticalSpaceAround size={15} />
@@ -721,7 +784,7 @@ function App() {
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-44 rounded-xl border border-stone-200 bg-white p-1.5 text-sm shadow-xl">
+                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-44 rounded-xl border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]">
                   <div className="px-2 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-400">输出正文行高</div>
                   {[1.5, 1.6, 1.75, 1.8, 2].map((lineHeight) => (
                     <DropdownMenu.Item
@@ -736,19 +799,19 @@ function App() {
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
-            <div className="flex rounded-lg bg-stone-100 p-0.5">
+            <div className="flex rounded-lg bg-stone-100 p-0.5 dark:bg-stone-800">
               {([
                 ["editor", Code2, "仅编辑"],
                 ["split", SplitSquareHorizontal, "分栏"],
                 ["preview", Eye, "仅预览"],
               ] as const).map(([mode, Icon, label]) => (
-                <button key={mode} title={label} onClick={() => setViewMode(mode)} className={clsx("rounded-md p-1.5 transition", viewMode === mode ? "bg-white text-[#20211f] shadow-sm" : "text-stone-400 hover:text-stone-600")}>
+                <button key={mode} title={label} onClick={() => setViewMode(mode)} className={clsx("rounded-md p-1.5 transition", viewMode === mode ? "bg-white text-[#20211f] shadow-sm dark:bg-stone-700 dark:text-stone-100" : "text-stone-400 hover:text-stone-600 dark:hover:text-stone-200")}>
                   <Icon size={16} />
                 </button>
               ))}
             </div>
             <ToolbarButton label={syncScroll ? "同步滚动已开启" : "同步滚动已关闭"} onClick={() => setSyncScroll((value) => !value)}>
-              <Link2 size={17} className={syncScroll ? "text-[#20211f]" : "text-stone-300"} />
+              <Link2 size={17} className={syncScroll ? "text-[#20211f] dark:text-stone-100" : "text-stone-300 dark:text-stone-600"} />
             </ToolbarButton>
             <button className="ml-1 inline-flex h-9 items-center gap-2 rounded-lg bg-[#20211f] px-3.5 text-sm font-medium text-white transition hover:bg-black" onClick={copyToWechat}>
               <Clipboard size={16} />复制到公众号
@@ -756,7 +819,7 @@ function App() {
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild><button className="icon-button"><ChevronDown size={16} /></button></DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" className="z-50 min-w-44 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl">
+                <DropdownMenu.Content align="end" className="z-50 min-w-44 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]">
                   <DropdownMenu.Item onSelect={exportHtml} className="menu-item"><FileDown size={15} />导出 HTML</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={saveDocumentAs} className="menu-item"><Save size={15} />另存为 Markdown</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={newDocument} className="menu-item"><Menu size={15} />新建文章</DropdownMenu.Item>
@@ -764,13 +827,18 @@ function App() {
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
           </div>
+          </>
+          )}
         </header>
 
+        {activePage === "settings" ? (
+          <SettingsPage colorScheme={colorScheme} onColorSchemeChange={setColorScheme} />
+        ) : (
         <main className="flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1">
             {viewMode !== "preview" && (
-              <section className={clsx("min-w-0", viewMode === "split" ? "w-1/2 border-r border-stone-200" : "w-full")}>
-                <div className="flex h-10 items-center justify-between border-b border-stone-100 bg-[#fbfcfb] px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">
+              <section className={clsx("min-w-0", viewMode === "split" ? "w-1/2 border-r border-stone-200 dark:border-stone-700" : "w-full")}>
+                <div className="flex h-10 items-center justify-between border-b border-stone-100 bg-[#fbfcfb] px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400 dark:border-stone-700 dark:bg-[#1f201e]">
                   <span>Markdown</span><span>{active.content.length} 字符</span>
                 </div>
                 <div className="h-[calc(100%-40px)]">
@@ -786,7 +854,7 @@ function App() {
             )}
             {viewMode !== "editor" && (
               <section className={clsx("min-w-0", viewMode === "split" ? "w-1/2" : "w-full")}>
-                <div className="flex h-10 items-center border-b border-stone-200 bg-[#f8f9f6] px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">微信预览 · 677px</div>
+                <div className="flex h-10 items-center border-b border-stone-200 bg-[#f8f9f6] px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400 dark:border-stone-700 dark:bg-[#1d1e1b]">微信预览 · 677px</div>
                 <div className="h-[calc(100%-40px)]">
                   <Preview
                     ref={previewRef}
@@ -798,18 +866,19 @@ function App() {
             )}
           </div>
         </main>
+        )}
         </div>
 
         {pendingClose && (
           <div className="fixed inset-0 z-[70] grid place-items-center bg-black/25 p-5 backdrop-blur-[1px]">
-            <div role="alertdialog" aria-modal="true" className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl">
+            <div role="alertdialog" aria-modal="true" className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl dark:border-stone-700 dark:bg-[#242522]">
               <div className="flex items-start gap-3">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-amber-50 text-amber-600">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300">
                   <AlertTriangle size={18} />
                 </span>
                 <div>
-                  <h2 className="text-base font-semibold text-stone-900">存在未保存的修改</h2>
-                  <p className="mt-1.5 text-sm leading-6 text-stone-500">
+                  <h2 className="text-base font-semibold text-stone-900 dark:text-stone-100">存在未保存的修改</h2>
+                  <p className="mt-1.5 text-sm leading-6 text-stone-500 dark:text-stone-400">
                     {pendingClose.kind === "application"
                       ? `退出前还有 ${pendingClose.documentIds.length} 个文档需要保存。`
                       : pendingClose.kind === "directory"
@@ -819,8 +888,8 @@ function App() {
                 </div>
               </div>
               <div className="mt-5 flex justify-end gap-2">
-                <button className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100" onClick={() => setPendingClose(null)}>取消</button>
-                <button className="rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50" onClick={() => void finishPendingClose(pendingClose, true)}>不保存</button>
+                <button className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800" onClick={() => setPendingClose(null)}>取消</button>
+                <button className="rounded-lg px-3 py-2 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40" onClick={() => void finishPendingClose(pendingClose, true)}>不保存</button>
                 <button className="rounded-lg bg-[#20211f] px-3.5 py-2 text-sm font-medium text-white hover:bg-black" onClick={() => void saveAndFinishPendingClose()}>保存并继续</button>
               </div>
             </div>
@@ -832,14 +901,14 @@ function App() {
           if (!document) return null;
           return (
             <div className="fixed inset-0 z-[80] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
-              <div role="alertdialog" aria-modal="true" className="flex max-h-[88vh] w-full max-w-5xl flex-col rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl">
+              <div role="alertdialog" aria-modal="true" className="flex max-h-[88vh] w-full max-w-5xl flex-col rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl dark:border-stone-700 dark:bg-[#242522]">
                 <div className="flex items-start gap-3">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-orange-50 text-orange-600"><AlertTriangle size={18} /></span>
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-orange-50 text-orange-600 dark:bg-orange-950/50 dark:text-orange-300"><AlertTriangle size={18} /></span>
                   <div>
-                    <h2 className="text-base font-semibold text-stone-900">
+                    <h2 className="text-base font-semibold text-stone-900 dark:text-stone-100">
                       {saveConflict.reason === "deleted" ? "磁盘文件已被删除" : "文件存在外部修改"}
                     </h2>
-                    <p className="mt-1 text-sm text-stone-500">
+                    <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">
                       {saveConflict.reason === "deleted"
                         ? "可以重新创建原文件，或者将当前内容保存到其它位置。"
                         : "为避免覆盖其它程序的修改，保存已暂停。请比较两个版本后选择处理方式。"}
@@ -855,10 +924,10 @@ function App() {
                 )}
 
                 <div className="mt-5 flex flex-wrap justify-end gap-2">
-                  <button className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100" onClick={() => setSaveConflict(null)}>取消</button>
-                  <button className="rounded-lg px-3 py-2 text-sm text-stone-700 hover:bg-stone-100" onClick={() => void saveConflictAs()}>另存为</button>
+                  <button className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800" onClick={() => setSaveConflict(null)}>取消</button>
+                  <button className="rounded-lg px-3 py-2 text-sm text-stone-700 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800" onClick={() => void saveConflictAs()}>另存为</button>
                   {saveConflict.diskSnapshot && (
-                    <button className="rounded-lg px-3 py-2 text-sm text-orange-700 hover:bg-orange-50" onClick={reloadConflictFromDisk}>使用磁盘版本</button>
+                    <button className="rounded-lg px-3 py-2 text-sm text-orange-700 hover:bg-orange-50 dark:text-orange-400 dark:hover:bg-orange-950/40" onClick={reloadConflictFromDisk}>使用磁盘版本</button>
                   )}
                   <button className="rounded-lg bg-[#20211f] px-3.5 py-2 text-sm font-medium text-white hover:bg-black" onClick={() => void overwriteConflict()}>
                     {saveConflict.reason === "deleted" ? "重新创建原文件" : "使用当前版本覆盖"}
@@ -879,6 +948,82 @@ function App() {
   );
 }
 
+function SettingsPage({
+  colorScheme,
+  onColorSchemeChange,
+}: {
+  colorScheme: AppColorScheme;
+  onColorSchemeChange: (value: AppColorScheme) => void;
+}) {
+  return (
+    <main className="flex min-h-0 flex-1 bg-[#f8f8f6] dark:bg-[#1b1c19]">
+      {/* 设置分类单独占一列，后续增加编辑器、导出等设置时无需改动页面结构。 */}
+      <nav className="w-52 shrink-0 border-r border-stone-200 px-3 py-5 dark:border-stone-700">
+        <div className="px-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400">设置</div>
+        <button className="mt-3 flex w-full items-center gap-2 rounded-lg bg-stone-200/70 px-3 py-2 text-left text-sm font-medium text-stone-800 dark:bg-stone-800 dark:text-stone-100">
+          <Settings size={15} />
+          通用
+        </button>
+      </nav>
+
+      <ScrollArea.Root className="min-w-0 flex-1 overflow-hidden">
+        <ScrollArea.Viewport className="h-full w-full">
+          <div className="mx-auto w-full max-w-3xl px-10 py-9">
+            <div>
+              <h1 className="text-xl font-semibold text-stone-900 dark:text-stone-100">通用设置</h1>
+              <p className="mt-1.5 text-sm text-stone-500 dark:text-stone-400">调整文染的软件外观与通用行为。</p>
+            </div>
+
+            <section className="mt-8 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
+              <div className="border-b border-stone-200 px-5 py-4 dark:border-stone-700">
+                <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">外观</div>
+                <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">
+                  软件主题应用于侧边栏、工具栏、菜单、设置、编辑器和系统弹窗。微信文章预览保持文章主题原本的样式。
+                </div>
+              </div>
+              <div className="px-5 py-5">
+                <div className="text-sm font-medium text-stone-800 dark:text-stone-200">软件主题</div>
+                <div className="mt-3 grid grid-cols-3 gap-3">
+                  {([
+                    ["system", Monitor, "跟随系统", "根据系统外观自动切换"],
+                    ["light", Sun, "亮色", "整个软件始终使用亮色"],
+                    ["dark", Moon, "暗色", "整个软件始终使用暗色"],
+                  ] as const).map(([value, Icon, label, description]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={colorScheme === value}
+                      className={clsx(
+                        "relative flex min-h-28 flex-col items-start rounded-xl border p-4 text-left transition",
+                        colorScheme === value
+                          ? "border-stone-700 bg-stone-50 ring-1 ring-stone-700 dark:border-stone-300 dark:bg-stone-800 dark:ring-stone-300"
+                          : "border-stone-200 hover:border-stone-300 hover:bg-stone-50 dark:border-stone-700 dark:hover:border-stone-600 dark:hover:bg-stone-800/70",
+                      )}
+                      onClick={() => onColorSchemeChange(value)}
+                    >
+                      <Icon size={19} className="text-stone-700 dark:text-stone-300" />
+                      <span className="mt-4 text-sm font-medium text-stone-900 dark:text-stone-100">{label}</span>
+                      <span className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">{description}</span>
+                      {colorScheme === value && (
+                        <span className="absolute right-3 top-3 grid h-5 w-5 place-items-center rounded-full bg-stone-800 text-white dark:bg-stone-100 dark:text-stone-900">
+                          <Check size={12} strokeWidth={3} />
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </section>
+          </div>
+        </ScrollArea.Viewport>
+        <ScrollArea.Scrollbar orientation="vertical" className="flex w-2.5 touch-none select-none p-0.5">
+          <ScrollArea.Thumb className="min-h-8 flex-1 rounded-full bg-stone-300 dark:bg-stone-700" />
+        </ScrollArea.Scrollbar>
+      </ScrollArea.Root>
+    </main>
+  );
+}
+
 function ToolbarButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <Tooltip.Root>
@@ -890,9 +1035,9 @@ function ToolbarButton({ label, onClick, children }: { label: string; onClick: (
 
 function ConflictPane({ title, content }: { title: string; content: string }) {
   return (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-stone-200 bg-stone-50">
-      <div className="shrink-0 border-b border-stone-200 px-3 py-2 text-xs font-semibold text-stone-600">{title}</div>
-      <pre className="min-h-40 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-6 text-stone-700">{content}</pre>
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-[#1d1e1b]">
+      <div className="shrink-0 border-b border-stone-200 px-3 py-2 text-xs font-semibold text-stone-600 dark:border-stone-700 dark:text-stone-300">{title}</div>
+      <pre className="min-h-40 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-6 text-stone-700 dark:text-stone-300">{content}</pre>
     </section>
   );
 }

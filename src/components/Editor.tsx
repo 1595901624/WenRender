@@ -47,16 +47,16 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({ value, o
         keymap.of([]),
         EditorView.lineWrapping,
         EditorView.theme({
-          "&": { height: "100%", backgroundColor: "#fbfcfb", color: "#26302a", fontSize: "15px" },
+          "&": { height: "100%", backgroundColor: "var(--editor-background)", color: "var(--editor-foreground)", fontSize: "15px" },
           ".cm-scroller": { fontFamily: "Consolas, 'SFMono-Regular', Menlo, monospace", lineHeight: "1.75", padding: "24px 8px 60px" },
           ".cm-content": { maxWidth: "760px", margin: "0 auto", caretColor: "#2f8f5b" },
-          ".cm-gutters": { backgroundColor: "#fbfcfb", color: "#a1aaa4", border: "none" },
+          ".cm-gutters": { backgroundColor: "var(--editor-background)", color: "var(--editor-gutter)", border: "none" },
           // CodeMirror 的选区层位于文本和活动行下方，活动行必须使用透明色，否则会遮住选区。
-          ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "rgba(47, 143, 91, 0.07)" },
+          ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--editor-active-line)" },
           // 分别覆盖失焦和聚焦选区；不要改原生 ::selection，drawSelection 会主动隐藏它。
-          ".cm-selectionBackground": { backgroundColor: "#dbe9df !important" },
+          ".cm-selectionBackground": { backgroundColor: "var(--editor-selection) !important" },
           "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
-            backgroundColor: "#b9ddc3 !important",
+            backgroundColor: "var(--editor-selection-focused) !important",
           },
         }),
         EditorView.updateListener.of((update) => {

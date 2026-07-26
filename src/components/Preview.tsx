@@ -49,8 +49,8 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ html,
   };
 
   return (
-    <div className="h-full overflow-hidden bg-[#f7f7f5] px-5 py-5">
-      <div className="mx-auto h-full max-w-[720px] overflow-hidden rounded-xl bg-white shadow-soft ring-1 ring-black/5">
+    <div className="h-full overflow-hidden bg-[#f7f7f5] px-5 py-5 dark:bg-[#181916]">
+      <div className="mx-auto h-full max-w-[720px] overflow-hidden rounded-xl bg-white shadow-soft ring-1 ring-black/5 dark:ring-white/10">
         <iframe ref={frame} onLoad={connectScroll} title="微信文章预览" className="block h-full w-full border-0 bg-white" />
       </div>
     </div>
