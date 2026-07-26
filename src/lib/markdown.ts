@@ -9,6 +9,7 @@ import rust from "highlight.js/lib/languages/rust";
 import toml from "highlight.js/lib/languages/ini";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
+import { codeTokenStyle, defaultCodeTheme, type CodeTheme } from "./codeThemes";
 import type { ArticleTheme } from "./themes";
 import { defaultTheme } from "./themes";
 
@@ -34,43 +35,22 @@ function protectSpaces(html: string) {
   );
 }
 
-function codeBlock(code: string, language: string, theme: ArticleTheme) {
+function codeBlock(code: string, language: string, theme: ArticleTheme, codeTheme: CodeTheme) {
   const knownLanguage = language && hljs.getLanguage(language);
   const highlighted = knownLanguage
     ? hljs.highlight(code, { language }).value
     : hljs.highlightAuto(code).value;
 
-  const classColors: Record<string, string> = {
-    "hljs-keyword": "#c678dd",
-    "hljs-built_in": "#56b6c2",
-    "hljs-type": "#56b6c2",
-    "hljs-title": "#61afef",
-    "hljs-title function_": "#61afef",
-    "hljs-function": "#61afef",
-    "hljs-string": "#98c379",
-    "hljs-number": "#d19a66",
-    "hljs-literal": "#d19a66",
-    "hljs-comment": "#7f848e",
-    "hljs-attr": "#61afef",
-    "hljs-meta": "#e5c07b",
-    "hljs-variable": "#e06c75",
-    "hljs-params": "#abb2bf",
-    "hljs-symbol": "#56b6c2",
-  };
-
   // 发布内容不能依赖外部 CSS，把 Highlight.js 的 class 预先转换为微信可保留的内联颜色。
   const inlineHighlighted = highlighted.replace(
     /<span class="([^"]+)">/g,
-    (_, className: string) => {
-      const color = classColors[className] ?? className.split(" ").map((name) => classColors[name]).find(Boolean) ?? "#abb2bf";
-      return `<span style="color:${color};">`;
-    },
+    (_, className: string) => `<span style="${codeTokenStyle(codeTheme, className)}">`,
   );
 
-  return `<pre style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:18px 0;padding:18px 17px;background-color:${theme.colors.codeBackground};border:1px solid ${theme.colors.border};border-radius:${theme.appearance.codeRadius}px;color:${theme.colors.codeText};font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;tab-size:4;white-space:pre;word-break:normal;box-sizing:border-box;"><code style="font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;white-space:pre;">${protectSpaces(inlineHighlighted)}</code></pre>`;
+  return `<pre style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:18px 0;padding:18px 17px;background-color:${codeTheme.background};border:1px solid ${codeTheme.border};border-radius:${theme.appearance.codeRadius}px;color:${codeTheme.foreground};font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;tab-size:4;white-space:pre;word-break:normal;box-sizing:border-box;"><code style="font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;white-space:pre;">${protectSpaces(inlineHighlighted)}</code></pre>`;
 }
 
-function createRenderer(theme: ArticleTheme, resolveImage?: (source: string) => string) {
+function createRenderer(theme: ArticleTheme, codeTheme: CodeTheme, resolveImage?: (source: string) => string) {
   const bodyText = `font-family:${theme.typography.fontFamily};font-size:${theme.typography.bodySize}px;line-height:${theme.typography.bodyLineHeight} !important;color:${theme.colors.text};letter-spacing:0;text-align:left;`;
   const paragraph = `margin:0 0 ${theme.typography.paragraphSpacing}px;${bodyText}`;
   const inlineCode = `font-size:${theme.typography.codeSize}px;word-break:break-word;padding:2px 5px;border-radius:4px;margin:0 2px;color:${theme.colors.accent};font-weight:600;background-color:${theme.colors.inlineCodeBackground};font-family:Consolas,'SFMono-Regular',Menlo,monospace;`;
@@ -79,12 +59,12 @@ function createRenderer(theme: ArticleTheme, resolveImage?: (source: string) => 
     html: true,
     linkify: true,
     typographer: false,
-    highlight: (code, language) => codeBlock(code, language, theme),
+    highlight: (code, language) => codeBlock(code, language, theme, codeTheme),
   });
 
   md.renderer.rules.fence = (tokens, index) => {
     const token = tokens[index];
-    return codeBlock(token.content.replace(/\n$/, ""), token.info.trim().split(/\s+/)[0], theme);
+    return codeBlock(token.content.replace(/\n$/, ""), token.info.trim().split(/\s+/)[0], theme, codeTheme);
   };
   md.renderer.rules.paragraph_open = () => `<p style="${paragraph}">`;
   md.renderer.rules.heading_open = (tokens, index) => {
@@ -173,8 +153,13 @@ function contrastText(hex: string): string {
   return (red * 299 + green * 587 + blue * 114) / 1000 > 150 ? "#222222" : "#ffffff";
 }
 
-export function renderMarkdown(source: string, theme: ArticleTheme = defaultTheme, resolveImage?: (source: string) => string): string {
-  const md = createRenderer(theme, resolveImage);
+export function renderMarkdown(
+  source: string,
+  theme: ArticleTheme = defaultTheme,
+  codeTheme: CodeTheme = defaultCodeTheme,
+  resolveImage?: (source: string) => string,
+): string {
+  const md = createRenderer(theme, codeTheme, resolveImage);
   return md.render(source);
 }
 

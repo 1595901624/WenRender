@@ -4,12 +4,13 @@ import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { AlignVerticalSpaceAround, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Palette, PanelLeftClose, PanelLeftOpen, Save, SplitSquareHorizontal } from "lucide-react";
+import { AlignVerticalSpaceAround, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Palette, PanelLeftClose, PanelLeftOpen, Save, SplitSquareHorizontal } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
 import { Preview, type PreviewHandle } from "./components/Preview";
 import { createId, fileName } from "./lib/path";
+import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
 import { loadWorkspaceSession, saveWorkspaceSession, type WorkspaceSession } from "./lib/workspace";
@@ -45,6 +46,9 @@ function App() {
   const [viewMode, setViewMode] = useState<"split" | "editor" | "preview">("split");
   const [notice, setNotice] = useState<Notice>(null);
   const [themeId, setThemeId] = useState(() => window.localStorage.getItem("wenrender-theme") ?? defaultTheme.id);
+  const [codeThemeId, setCodeThemeId] = useState(
+    () => window.localStorage.getItem("wenrender-code-theme") ?? defaultCodeTheme.id,
+  );
   const [outputLineHeight, setOutputLineHeight] = useState(defaultTheme.typography.bodyLineHeight);
   const [syncScroll, setSyncScroll] = useState(true);
   const [workspaceReady, setWorkspaceReady] = useState(false);
@@ -94,11 +98,16 @@ function App() {
   }, [themeId]);
 
   useEffect(() => {
+    window.localStorage.setItem("wenrender-code-theme", codeThemeId);
+  }, [codeThemeId]);
+
+  useEffect(() => {
     window.localStorage.setItem("wenrender-sidebar-open", String(sidebarOpen));
   }, [sidebarOpen]);
 
   const active = documents.find((document) => document.id === activeId) ?? documents[0];
   const baseTheme = articleThemes.find((item) => item.id === themeId) ?? defaultTheme;
+  const codeTheme = codeThemes.find((item) => item.id === codeThemeId) ?? defaultCodeTheme;
   const theme = useMemo(() => ({
     ...baseTheme,
     typography: {
@@ -106,7 +115,10 @@ function App() {
       bodyLineHeight: outputLineHeight,
     },
   }), [baseTheme, outputLineHeight]);
-  const rendered = useMemo(() => renderMarkdown(active.content, theme, (source) => resolveArticleImage(source, active.path)), [active.content, active.path, theme]);
+  const rendered = useMemo(
+    () => renderMarkdown(active.content, theme, codeTheme, (source) => resolveArticleImage(source, active.path)),
+    [active.content, active.path, codeTheme, theme],
+  );
   const fullHtml = useMemo(() => wrapHtml(rendered, active.name.replace(/\.md$/i, ""), theme), [rendered, active.name, theme]);
 
   const notify = (message: string, tone: NonNullable<Notice>["tone"] = "neutral") => {
@@ -344,6 +356,61 @@ function App() {
                             <Check size={10} strokeWidth={3} />
                           </span>
                         )}
+                      </DropdownMenu.Item>
+                    ))}
+                  </div>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  className="inline-flex h-8 max-w-36 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100"
+                  title="选择代码高亮主题"
+                >
+                  <Braces size={15} className="shrink-0" />
+                  <span className="truncate">{codeTheme.name}</span>
+                  <ChevronDown size={13} className="shrink-0 text-stone-400" />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-72 rounded-2xl border border-stone-200 bg-white p-2.5 shadow-[0_18px_50px_rgba(28,25,23,0.16)]">
+                  <div className="px-2 pb-2.5 pt-1">
+                    <div className="text-sm font-semibold text-stone-800">代码主题</div>
+                    <div className="mt-0.5 text-[11px] text-stone-400">使用 Highlight.js 官方配色</div>
+                  </div>
+                  <div className="space-y-1">
+                    {codeThemes.map((item) => (
+                      <DropdownMenu.Item
+                        key={item.id}
+                        onSelect={() => setCodeThemeId(item.id)}
+                        className={clsx(
+                          "flex cursor-default items-center gap-3 rounded-xl border p-2 outline-none transition",
+                          item.id === codeThemeId ? "border-stone-300 bg-stone-50" : "border-transparent focus:bg-stone-50",
+                        )}
+                      >
+                        <div
+                          className="grid h-9 w-14 shrink-0 place-items-center rounded-md border font-mono text-[11px] shadow-sm"
+                          style={{
+                            backgroundColor: item.background,
+                            borderColor: item.border,
+                            color: item.swatches[1],
+                          }}
+                        >
+                          {"</>"}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate text-sm font-medium text-stone-800">{item.name}</span>
+                            <span className="flex shrink-0 overflow-hidden rounded-full ring-1 ring-black/5">
+                              {item.swatches.map((color) => (
+                                <span key={color} className="h-2.5 w-2.5" style={{ backgroundColor: color }} />
+                              ))}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 truncate text-[11px] text-stone-400">{item.description}</div>
+                        </div>
+                        {item.id === codeThemeId && <Check size={15} className="shrink-0 text-stone-800" />}
                       </DropdownMenu.Item>
                     ))}
                   </div>
