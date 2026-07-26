@@ -1,8 +1,20 @@
-# 文染
+<div align="center">
+  <img src="./app_logo.png" width="88" height="88" alt="文染 Logo">
+  <h1>文染 WenRender</h1>
+  <p>一款面向微信公众号写作与排版场景的本地 Markdown 编辑器。</p>
+</div>
 
-文染是一款面向微信公众号写作场景的桌面端 Markdown 编辑器。它提供 Markdown 编辑、实时预览、内置主题、代码高亮和公众号格式复制等功能，帮助作者在本地完成文章编写与排版。
-
-软件基于 Tauri 2 和 React 构建，可在 Windows、macOS 与 Linux 桌面系统上运行。
+<div align="center">
+  <a href="https://github.com/1595901624/WenRender/releases">
+    <img src="https://img.shields.io/github/v/release/1595901624/WenRender?display_name=tag&label=version&color=1677ff" alt="最新版本">
+  </a>
+  <a href="./LICENSE">
+    <img src="https://img.shields.io/badge/license-AGPL--3.0-2f8f5b" alt="开源协议">
+  </a>
+  <img src="https://img.shields.io/badge/Windows-Supported-1677ff" alt="Windows Supported">
+  <img src="https://img.shields.io/badge/macOS-Coming%20Soon-f59e0b" alt="macOS Coming Soon">
+  <img src="https://img.shields.io/badge/Linux-Coming%20Soon-f59e0b" alt="Linux Coming Soon">
+</div>
 
 ## 软件界面
 
