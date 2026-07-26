@@ -22,14 +22,14 @@ jobs:
             platform: windows-latest
             rust-targets: ""
             args: "--bundles msi,nsis"
-          - name: macOS
-            platform: macos-14
-            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
-            args: "--target universal-apple-darwin --bundles dmg"
-          - name: Linux
-            platform: ubuntu-22.04
-            rust-targets: ""
-            args: "--bundles deb,appimage"
+          # - name: macOS
+          #   platform: macos-14
+          #   rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          #   args: "--target universal-apple-darwin --bundles dmg"
+          # - name: Linux
+          #   platform: ubuntu-22.04
+          #   rust-targets: ""
+          #   args: "--bundles deb,appimage"
 
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 60
