@@ -860,7 +860,7 @@ function App() {
             )}
             {viewMode !== "editor" && (
               <section className={clsx("min-w-0", viewMode === "split" ? "w-1/2" : "w-full")}>
-                <div className="flex h-10 items-center border-b border-stone-200 bg-[#f8f9f6] px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400 dark:border-stone-700 dark:bg-[#1d1e1b]">微信预览 · 677px</div>
+                <div className="flex h-10 items-center border-b border-stone-200 bg-[#f8f9f6] px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400 dark:border-stone-700 dark:bg-[#1d1e1b]">预览</div>
                 <div className="h-[calc(100%-40px)]">
                   <Preview
                     ref={previewRef}
