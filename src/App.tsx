@@ -7,11 +7,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
-import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, ExternalLink, Eye, FileDown, FolderOpen, Github, Info, Link2, Menu, Monitor, Moon, Palette, PanelLeftClose, PanelLeftOpen, Save, Settings, SplitSquareHorizontal, Sun, Type } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, ExternalLink, Eye, FileDown, FolderOpen, Github, Info, Link2, Menu, Monitor, Moon, Palette, PanelLeftClose, PanelLeftOpen, Save, Settings, Smartphone, SplitSquareHorizontal, Sun, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
-import { Preview, type PreviewHandle } from "./components/Preview";
+import { Preview, type PreviewHandle, type PreviewMode } from "./components/Preview";
 import { TypographyPanel } from "./components/TypographyPanel";
 import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
@@ -79,6 +79,9 @@ function App() {
     () => window.localStorage.getItem("wenrender-sidebar-open") !== "false",
   );
   const [viewMode, setViewMode] = useState<"split" | "editor" | "preview">("split");
+  const [previewMode, setPreviewMode] = useState<PreviewMode>(() => (
+    window.localStorage.getItem("wenrender-preview-mode") === "phone" ? "phone" : "web"
+  ));
   const [notice, setNotice] = useState<Notice>(null);
   const [themeId, setThemeId] = useState(() => window.localStorage.getItem("wenrender-theme") ?? defaultTheme.id);
   const [codeThemeId, setCodeThemeId] = useState(
@@ -236,6 +239,10 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem("wenrender-sidebar-open", String(sidebarOpen));
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    window.localStorage.setItem("wenrender-preview-mode", previewMode);
+  }, [previewMode]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -880,11 +887,37 @@ function App() {
             )}
             {viewMode !== "editor" && (
               <section className={clsx("min-w-0", viewMode === "split" ? "w-1/2" : "w-full")}>
-                <div className="flex h-10 items-center border-b border-stone-200 bg-[#f8f9f6] px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400 dark:border-stone-700 dark:bg-[#1d1e1b]">预览</div>
+                <div className="flex h-10 items-center justify-between border-b border-stone-200 bg-[#f8f9f6] px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400 dark:border-stone-700 dark:bg-[#1d1e1b]">
+                  <span>预览</span>
+                  <div className="flex rounded-lg bg-stone-200/70 p-0.5 normal-case tracking-normal dark:bg-stone-800">
+                    {([
+                      ["web", Monitor, "网页"],
+                      ["phone", Smartphone, "手机"],
+                    ] as const).map(([mode, Icon, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        aria-pressed={previewMode === mode}
+                        title={`${label}预览`}
+                        onClick={() => setPreviewMode(mode)}
+                        className={clsx(
+                          "inline-flex h-6 items-center gap-1 rounded-md px-2 text-[10px] font-medium transition",
+                          previewMode === mode
+                            ? "bg-white text-stone-800 shadow-sm dark:bg-stone-700 dark:text-stone-100"
+                            : "text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200",
+                        )}
+                      >
+                        <Icon size={12} />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="h-[calc(100%-40px)]">
                   <Preview
                     ref={previewRef}
                     html={fullHtml}
+                    mode={previewMode}
                     onScrollRatio={(ratio) => { if (syncScroll) editorRef.current?.scrollToRatio(ratio); }}
                   />
                 </div>
