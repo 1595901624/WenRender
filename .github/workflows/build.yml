@@ -85,6 +85,6 @@ jobs:
           tagName: "v__VERSION__"
           releaseName: "文染 WenRender v__VERSION__"
           releaseBody: "文染 WenRender 跨平台安装包。"
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
