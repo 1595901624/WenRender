@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { getVersion } from "@tauri-apps/api/app";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
@@ -26,7 +27,6 @@ import {
 } from "./lib/typography";
 import { loadWorkspaceSession, saveWorkspaceSession, type WorkspaceSession } from "./lib/workspace";
 import type { DirectoryNode, FileInspection, FileSnapshot, Notice, OpenDirectory, OpenDocument } from "./types";
-import packageMetadata from "../package.json";
 
 type SaveOutcome = {
   status: "saved" | "conflict";
@@ -1125,6 +1125,29 @@ function GeneralSettings({
 }
 
 function AboutSettings() {
+  const [appVersion, setAppVersion] = useState("获取中…");
+
+  useEffect(() => {
+    let active = true;
+
+    // 通过 Tauri 运行时读取安装包的真实版本，避免前端元数据与应用版本不一致。
+    void getVersion()
+      .then((version) => {
+        if (active) {
+          setAppVersion(version);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAppVersion("未知");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <div className="mx-auto w-full max-w-3xl px-10 py-9">
       <div>
@@ -1134,18 +1157,18 @@ function AboutSettings() {
 
       <section className="mt-8 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
         <div className="flex items-center gap-4 border-b border-stone-200 px-5 py-5 dark:border-stone-700">
-          <img src="/app_logo_radius.png" alt="文染标志" className="h-16 w-16 object-cover shadow-sm ring-1 ring-black/5 dark:ring-white/10" />
+          <img src="/app_logo_radius.png" alt="文染标志" className="h-16 w-16 object-cover" />
           <div className="min-w-0">
             <div className="text-lg font-semibold text-stone-900 dark:text-stone-100">文染 WenRender</div>
             <div className="mt-1 text-sm text-stone-500 dark:text-stone-400">面向微信公众号写作场景的跨平台 Markdown 编辑器。</div>
             <span className="mt-2 inline-flex rounded-full bg-stone-100 px-2.5 py-1 font-mono text-xs text-stone-600 dark:bg-stone-800 dark:text-stone-300">
-              版本 {packageMetadata.version}
+              版本 {appVersion}
             </span>
           </div>
         </div>
 
         <dl className="divide-y divide-stone-100 px-5 dark:divide-stone-700">
-          <AboutRow label="当前版本" value={packageMetadata.version} />
+          <AboutRow label="当前版本" value={appVersion} />
           {/* <AboutRow label="支持平台" value="Windows、macOS、Linux" /> */}
           <AboutRow label="核心技术" value="Tauri 2、React、CodeMirror 6" />
           <AboutRow label="开源协议" value="GNU AGPL v3" />
