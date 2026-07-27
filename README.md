@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./app_logo.png" width="88" height="88" alt="文染 Logo">
+  <img src="./app_logo_radius.png" width="88" height="88" alt="文染 Logo">
   <h1>文染 WenRender</h1>
   <p>一款面向微信公众号写作与排版场景的本地 Markdown 编辑器。</p>
 </div>

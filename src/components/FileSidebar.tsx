@@ -87,7 +87,7 @@ export function FileSidebar({
       <div className="flex h-11 items-center justify-between px-2">
         <div className="flex items-center gap-2.5">
           <img
-            src="/app_logo.png"
+            src="/app_logo_radius.png"
             alt="文染标志"
             className="h-8 w-8 rounded-lg object-cover shadow-sm ring-1 ring-black/5 dark:ring-white/10"
           />
