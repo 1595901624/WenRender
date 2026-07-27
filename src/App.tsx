@@ -7,16 +7,23 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
-import { AlertTriangle, AlignVerticalSpaceAround, ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, ExternalLink, Eye, FileDown, FolderOpen, Github, Info, Link2, Menu, Monitor, Moon, Palette, PanelLeftClose, PanelLeftOpen, Save, Settings, SplitSquareHorizontal, Sun } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, ExternalLink, Eye, FileDown, FolderOpen, Github, Info, Link2, Menu, Monitor, Moon, Palette, PanelLeftClose, PanelLeftOpen, Save, Settings, SplitSquareHorizontal, Sun, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
 import { Preview, type PreviewHandle } from "./components/Preview";
+import { TypographyPanel } from "./components/TypographyPanel";
 import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
 import { hasUnsavedChanges, needsSaveAttention } from "./lib/document";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
+import {
+  countTypographyOverrides,
+  parseTypographyOverrides,
+  type TypographyOverrides,
+  type TypographyOverridesByTheme,
+} from "./lib/typography";
 import { loadWorkspaceSession, saveWorkspaceSession, type WorkspaceSession } from "./lib/workspace";
 import type { DirectoryNode, FileInspection, FileSnapshot, Notice, OpenDirectory, OpenDocument } from "./types";
 import packageMetadata from "../package.json";
@@ -77,7 +84,10 @@ function App() {
   const [codeThemeId, setCodeThemeId] = useState(
     () => window.localStorage.getItem("wenrender-code-theme") ?? defaultCodeTheme.id,
   );
-  const [outputLineHeight, setOutputLineHeight] = useState(defaultTheme.typography.bodyLineHeight);
+  const [typographyPanelOpen, setTypographyPanelOpen] = useState(false);
+  const [typographyOverridesByTheme, setTypographyOverridesByTheme] = useState<TypographyOverridesByTheme>(
+    () => parseTypographyOverrides(window.localStorage.getItem("wenrender-typography-overrides")),
+  );
   const [syncScroll, setSyncScroll] = useState(true);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [activePage, setActivePage] = useState<AppPage>("workspace");
@@ -220,6 +230,10 @@ function App() {
   }, [codeThemeId]);
 
   useEffect(() => {
+    window.localStorage.setItem("wenrender-typography-overrides", JSON.stringify(typographyOverridesByTheme));
+  }, [typographyOverridesByTheme]);
+
+  useEffect(() => {
     window.localStorage.setItem("wenrender-sidebar-open", String(sidebarOpen));
   }, [sidebarOpen]);
 
@@ -244,18 +258,32 @@ function App() {
   const active = documents.find((document) => document.id === activeId) ?? documents[0];
   const baseTheme = articleThemes.find((item) => item.id === themeId) ?? defaultTheme;
   const codeTheme = codeThemes.find((item) => item.id === codeThemeId) ?? defaultCodeTheme;
-  const theme = useMemo(() => ({
-    ...baseTheme,
-    typography: {
-      ...baseTheme.typography,
-      bodyLineHeight: outputLineHeight,
-    },
-  }), [baseTheme, outputLineHeight]);
+  const typographyOverrides = typographyOverridesByTheme[baseTheme.id] ?? {};
+  const typographyCustomCount = countTypographyOverrides(typographyOverrides);
+  const updateTypographyOverrides = useCallback((overrides: TypographyOverrides) => {
+    setTypographyOverridesByTheme((items) => ({ ...items, [baseTheme.id]: overrides }));
+  }, [baseTheme.id]);
+  const resetTypographyOverrides = useCallback(() => {
+    setTypographyOverridesByTheme((items) => {
+      const next = { ...items };
+      delete next[baseTheme.id];
+      return next;
+    });
+  }, [baseTheme.id]);
   const rendered = useMemo(
-    () => renderMarkdown(active.content, theme, codeTheme, (source) => resolveArticleImage(source, active.path)),
-    [active.content, active.path, codeTheme, theme],
+    () => renderMarkdown(
+      active.content,
+      baseTheme,
+      codeTheme,
+      (source) => resolveArticleImage(source, active.path),
+      typographyOverrides,
+    ),
+    [active.content, active.path, baseTheme, codeTheme, typographyOverrides],
   );
-  const fullHtml = useMemo(() => wrapHtml(rendered, active.name.replace(/\.md$/i, ""), theme), [rendered, active.name, theme]);
+  const fullHtml = useMemo(
+    () => wrapHtml(rendered, active.name.replace(/\.md$/i, ""), baseTheme, typographyOverrides),
+    [rendered, active.name, baseTheme, typographyOverrides],
+  );
 
   const notify = (message: string, tone: NonNullable<Notice>["tone"] = "neutral") => {
     setNotice({ message, tone });
@@ -666,7 +694,7 @@ function App() {
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button className="inline-flex h-8 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800">
-                  <Palette size={15} /><span>{theme.name}</span><ChevronDown size={13} className="text-stone-400" />
+                  <Palette size={15} /><span>{baseTheme.name}</span><ChevronDown size={13} className="text-stone-400" />
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
@@ -777,33 +805,25 @@ function App() {
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-stone-600 transition hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
-                  title="设置输出正文行高"
-                >
-                  <AlignVerticalSpaceAround size={15} />
-                  <span>行高 {outputLineHeight.toFixed(2)}</span>
-                  <ChevronDown size={12} className="text-stone-400" />
-                </button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-44 rounded-xl border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]">
-                  <div className="px-2 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-stone-400">输出正文行高</div>
-                  {[1.5, 1.6, 1.75, 1.8, 2].map((lineHeight) => (
-                    <DropdownMenu.Item
-                      key={lineHeight}
-                      onSelect={() => setOutputLineHeight(lineHeight)}
-                      className="menu-item justify-between"
-                    >
-                      <span>{lineHeight.toFixed(2)}</span>
-                      {outputLineHeight === lineHeight && <Check size={14} />}
-                    </DropdownMenu.Item>
-                  ))}
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
+            <button
+              type="button"
+              aria-pressed={typographyPanelOpen}
+              className={clsx(
+                "relative inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition",
+                typographyPanelOpen
+                  ? "bg-stone-100 text-stone-900 dark:bg-stone-800 dark:text-stone-100"
+                  : "text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800",
+              )}
+              title="调整文章字体与标题层级"
+              onClick={() => {
+                setTypographyPanelOpen((value) => !value);
+                if (viewMode === "editor") setViewMode("split");
+              }}
+            >
+              <Type size={15} />
+              <span>排版</span>
+              {typographyCustomCount > 0 && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
+            </button>
             <div className="flex rounded-lg bg-stone-100 p-0.5 dark:bg-stone-800">
               {([
                 ["editor", Code2, "仅编辑"],
@@ -839,7 +859,7 @@ function App() {
         {activePage === "settings" ? (
           <SettingsPage colorScheme={colorScheme} onColorSchemeChange={setColorScheme} />
         ) : (
-        <main className="flex min-h-0 flex-1">
+        <main className="relative flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1">
             {viewMode !== "preview" && (
               <section className={clsx("min-w-0", viewMode === "split" ? "w-1/2 border-r border-stone-200 dark:border-stone-700" : "w-full")}>
@@ -871,6 +891,15 @@ function App() {
               </section>
             )}
           </div>
+          {typographyPanelOpen && (
+            <TypographyPanel
+              theme={baseTheme}
+              overrides={typographyOverrides}
+              onChange={updateTypographyOverrides}
+              onReset={resetTypographyOverrides}
+              onClose={() => setTypographyPanelOpen(false)}
+            />
+          )}
         </main>
         )}
         </div>

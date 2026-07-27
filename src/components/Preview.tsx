@@ -12,12 +12,22 @@ type Props = {
 export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ html, onScrollRatio }, ref) {
   const frame = useRef<HTMLIFrameElement>(null);
   const suppressScroll = useRef(false);
+  const pendingScrollRatio = useRef<number | null>(null);
   const onScrollRef = useRef(onScrollRatio);
   onScrollRef.current = onScrollRatio;
 
   useEffect(() => {
     // iframe 隔离文章样式，确保主题的内联 CSS 不会污染应用界面。
-    if (frame.current) frame.current.srcdoc = html;
+    const iframe = frame.current;
+    if (!iframe) return;
+    const window = iframe.contentWindow;
+    const document = iframe.contentDocument;
+    if (window && document) {
+      const root = document.documentElement;
+      const maximum = Math.max(0, root.scrollHeight - root.clientHeight);
+      if (maximum > 0) pendingScrollRatio.current = window.scrollY / maximum;
+    }
+    iframe.srcdoc = html;
   }, [html]);
 
   useImperativeHandle(ref, () => ({
@@ -46,6 +56,14 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ html,
       const maximum = Math.max(1, root.scrollHeight - root.clientHeight);
       onScrollRef.current?.(window.scrollY / maximum);
     };
+    if (pendingScrollRatio.current !== null) {
+      const ratio = pendingScrollRatio.current;
+      pendingScrollRatio.current = null;
+      const maximum = Math.max(0, root.scrollHeight - root.clientHeight);
+      suppressScroll.current = true;
+      window.scrollTo({ top: maximum * ratio });
+      requestAnimationFrame(() => { suppressScroll.current = false; });
+    }
   };
 
   return (
