@@ -849,12 +849,12 @@ function App() {
                 </button>
                 <span className="ml-1 text-sm font-semibold text-[#272825] dark:text-stone-100">设置</span>
               </div>
-              <button
+              {/* <button
                 className="rounded-lg px-3 py-1.5 text-sm font-medium text-stone-600 transition hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
                 onClick={() => setActivePage("workspace")}
               >
                 返回编辑器
-              </button>
+              </button> */}
             </>
           ) : (
           <>
@@ -1044,7 +1044,7 @@ function App() {
                 <DropdownMenu.Content align="end" className="z-50 min-w-44 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]">
                   <DropdownMenu.Item onSelect={exportHtml} className="menu-item"><FileDown size={15} />导出 HTML</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={saveDocumentAs} className="menu-item"><Save size={15} />另存为 Markdown</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={newDocument} className="menu-item"><Menu size={15} />新建文章</DropdownMenu.Item>
+                  {/* <DropdownMenu.Item onSelect={newDocument} className="menu-item"><Menu size={15} />新建文章</DropdownMenu.Item> */}
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
