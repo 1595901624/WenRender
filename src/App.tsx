@@ -27,6 +27,19 @@ import {
   type TypographyOverridesByTheme,
 } from "./lib/typography";
 import { loadWorkspaceSession, saveWorkspaceSession, type WorkspaceSession } from "./lib/workspace";
+import {
+  applySnapshot as applyWorkspaceSnapshot,
+  createDocumentFromSnapshot as createWorkspaceDocument,
+  restoreWorkspaceSession as restoreWorkspace,
+} from "./features/workspace/workspaceRestore";
+import {
+  embedLocalImages as embedWorkspaceLocalImages,
+  formatFileSize as formatImageFileSize,
+  markdownImageAlt as createMarkdownImageAlt,
+  markdownImageDestination as createMarkdownImageDestination,
+  pathIsInside as isPathInside,
+  resolveArticleImage as resolveWorkspaceImage,
+} from "./features/images/articleImage";
 import type {
   ArticleImageInput,
   DirectoryNode,
@@ -130,7 +143,7 @@ function App() {
       return;
     }
 
-    void restoreWorkspaceSession(session).then((restored) => {
+    void restoreWorkspace(session).then((restored) => {
       if (cancelled) return;
       setDirectories(restored.directories);
       if (restored.documents.length > 0) {
@@ -209,7 +222,7 @@ function App() {
             });
             setDocuments((items) => items.map((item) => {
               if (item.id !== document.id || hasUnsavedChanges(item)) return item;
-              return applySnapshot(item, snapshot);
+              return applyWorkspaceSnapshot(item, snapshot);
             }));
           } catch {
             // 网络盘短暂不可用或文件被占用时不立即判定为删除，等待下一轮检查。
@@ -300,7 +313,7 @@ function App() {
       active.content,
       baseTheme,
       codeTheme,
-      (source) => resolveArticleImage(source, active.path),
+      (source) => resolveWorkspaceImage(source, active.path),
       typographyOverrides,
     ),
     [active.content, active.path, baseTheme, codeTheme, typographyOverrides],
@@ -350,7 +363,7 @@ function App() {
         });
         storedImages.push(stored);
         markdownImages.push(
-          `![${markdownImageAlt(stored.fileName)}](${markdownImageDestination(stored.relativePath)})`,
+          `![${createMarkdownImageAlt(stored.fileName)}](${createMarkdownImageDestination(stored.relativePath)})`,
         );
       } catch (error) {
         failedCount += 1;
@@ -360,7 +373,7 @@ function App() {
     }
 
     const containingDirectory = directories.find((directory) => (
-      directory.id === active.directoryId || pathIsInside(active.path!, directory.path)
+      directory.id === active.directoryId || isPathInside(active.path!, directory.path)
     ));
     if (containingDirectory && storedImages.length > 0) {
       void invoke<Omit<OpenDirectory, "id">>("scan_directory", {
@@ -376,7 +389,7 @@ function App() {
       const originalBytes = storedImages.reduce((sum, image) => sum + image.originalSize, 0);
       const savedBytes = storedImages.reduce((sum, image) => sum + image.savedSize, 0);
       const savedDetail = imageSettings.compress && savedBytes < originalBytes
-        ? `，减少 ${formatFileSize(originalBytes - savedBytes)}`
+        ? `，减少 ${formatImageFileSize(originalBytes - savedBytes)}`
         : "";
       const failedDetail = failedCount > 0 ? `；${failedCount} 张失败` : "";
       notify(
@@ -438,7 +451,7 @@ function App() {
         }
         const snapshot = await invoke<FileSnapshot>("read_file_snapshot", { filePath: path });
         const id = createId();
-        setDocuments((items) => [...items, createDocumentFromSnapshot(id, path, fileName(path), snapshot)]);
+        setDocuments((items) => [...items, createWorkspaceDocument(id, path, fileName(path), snapshot)]);
         setActiveId(id);
       }
     } catch (error) {
@@ -480,7 +493,7 @@ function App() {
       const snapshot = await invoke<FileSnapshot>("read_file_snapshot", { filePath: node.path });
       const id = createId();
       setDocuments((items) => [...items, {
-        ...createDocumentFromSnapshot(id, node.path, node.name, snapshot),
+        ...createWorkspaceDocument(id, node.path, node.name, snapshot),
         directoryId,
       }]);
       setActiveId(id);
@@ -572,7 +585,7 @@ function App() {
       if (!outcome.snapshot) throw new Error("保存完成但未返回文件快照");
       const updatedDocuments = documentsRef.current.map((item) => item.id === document.id
         ? {
-          ...applySnapshot(item, outcome.snapshot!),
+          ...applyWorkspaceSnapshot(item, outcome.snapshot!),
           path,
           name: fileName(path),
           content: document.content,
@@ -622,7 +635,7 @@ function App() {
       },
       typographyOverrides,
     );
-    const embedded = await embedLocalImages(copyRendered);
+    const embedded = await embedWorkspaceLocalImages(copyRendered);
     try {
       // 同时写入 HTML 与纯文本，让公众号编辑器优先读取带内联样式的版本。
       const blobHtml = new Blob([embedded.html], { type: "text/html" });
@@ -699,7 +712,7 @@ function App() {
     if (!saveConflict?.diskSnapshot) return;
     setDocuments((items) => items.map((item) => (
       item.id === saveConflict.documentId
-        ? { ...applySnapshot(item, saveConflict.diskSnapshot!), recoveredDraft: false }
+        ? { ...applyWorkspaceSnapshot(item, saveConflict.diskSnapshot!), recoveredDraft: false }
         : item
     )));
     setSaveConflict(null);
