@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+
 use crate::models::{FileFingerprint, FileInspection, FileSnapshot, SaveOutcome};
 
 /// 读取 UTF-8 文本文件。
@@ -16,6 +18,35 @@ pub(crate) fn read_text_file(file_path: String) -> Result<String, String> {
         return Err("所选路径不是文件".to_string());
     }
     fs::read_to_string(&path).map_err(|error| format!("无法读取文件 {}：{error}", path.display()))
+}
+
+/// 读取本地图片并返回可嵌入 HTML 的 Data URL。
+#[tauri::command]
+pub(crate) fn read_image_data_url(file_path: String) -> Result<String, String> {
+    let path = PathBuf::from(file_path);
+    if !path.is_file() {
+        return Err(format!("图片不存在或不是普通文件：{}", path.display()));
+    }
+    let mime =
+        image_mime_type(&path).ok_or_else(|| format!("不支持的图片格式：{}", path.display()))?;
+    let bytes =
+        fs::read(&path).map_err(|error| format!("无法读取图片 {}：{error}", path.display()))?;
+    Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+}
+
+fn image_mime_type(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" | "jpe" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        "bmp" => Some("image/bmp"),
+        "avif" => Some("image/avif"),
+        "ico" => Some("image/x-icon"),
+        "tif" | "tiff" => Some("image/tiff"),
+        _ => None,
+    }
 }
 
 /// 读取文件正文、换行符、BOM、只读状态和磁盘指纹。
@@ -227,6 +258,19 @@ mod tests {
             .join("README.md");
         let content = read_text_file(readme.to_string_lossy().into_owned()).expect("read README");
         assert!(!content.is_empty());
+    }
+
+    #[test]
+    fn converts_a_local_image_to_a_data_url() {
+        let path =
+            std::env::temp_dir().join(format!("wenrender-image-test-{}.png", std::process::id()));
+        fs::write(&path, [0x89, b'P', b'N', b'G']).expect("create temporary image");
+
+        let data_url =
+            read_image_data_url(path.to_string_lossy().into_owned()).expect("read image");
+        assert_eq!(data_url, "data:image/png;base64,iVBORw==");
+
+        fs::remove_file(path).expect("remove temporary image");
     }
 
     #[test]

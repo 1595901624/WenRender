@@ -2,7 +2,8 @@ mod commands;
 mod models;
 
 use commands::{
-    inspect_text_file, read_file_snapshot, read_text_file, save_text_file_safely, scan_directory,
+    inspect_text_file, read_file_snapshot, read_image_data_url, read_text_file,
+    save_text_file_safely, scan_directory,
 };
 
 /// 创建并运行文染的 Tauri 应用。
@@ -18,6 +19,7 @@ pub fn run() {
             scan_directory,
             read_text_file,
             read_file_snapshot,
+            read_image_data_url,
             inspect_text_file,
             save_text_file_safely
         ])

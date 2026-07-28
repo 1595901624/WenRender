@@ -506,14 +506,33 @@ function App() {
   };
 
   const copyToWechat = async () => {
+    const copyRendered = renderMarkdown(
+      active.content,
+      baseTheme,
+      codeTheme,
+      (source) => {
+        const localPath = resolveLocalArticleImagePath(source, active.path);
+        return localPath ? `wenrender-local-image:${encodeURIComponent(localPath)}` : source;
+      },
+      typographyOverrides,
+    );
+    const embedded = await embedLocalImages(copyRendered);
     try {
       // 同时写入 HTML 与纯文本，让公众号编辑器优先读取带内联样式的版本。
-      const blobHtml = new Blob([rendered], { type: "text/html" });
+      const blobHtml = new Blob([embedded.html], { type: "text/html" });
       const blobText = new Blob([active.content], { type: "text/plain" });
       await navigator.clipboard.write([new ClipboardItem({ "text/html": blobHtml, "text/plain": blobText })]);
-      notify("已复制，可直接粘贴到公众号编辑器", "success");
+      const detail = embedded.embeddedCount > 0
+        ? `，已嵌入 ${embedded.embeddedCount} 张本地图片`
+        : "";
+      const failed = embedded.failedCount > 0
+        ? `；${embedded.failedCount} 张图片转换失败`
+        : "";
+      notify(`已复制，可直接粘贴到公众号编辑器${detail}${failed}`, embedded.failedCount > 0 ? "neutral" : "success");
     } catch {
-      await navigator.clipboard.writeText(fullHtml);
+      await navigator.clipboard.writeText(
+        wrapHtml(embedded.html, active.name.replace(/\.md$/i, ""), baseTheme, typographyOverrides),
+      );
       notify("已复制 HTML 源码", "neutral");
     }
   };
@@ -1392,12 +1411,20 @@ function applySnapshot(document: OpenDocument, snapshot: FileSnapshot): OpenDocu
   };
 }
 
-function resolveArticleImage(source: string, documentPath: string | null): string {
-  if (!documentPath || /^(?:https?:|data:|asset:|blob:)/i.test(source)) return source;
+function resolveLocalArticleImagePath(source: string, documentPath: string | null): string | null {
+  if (/^(?:https?:|data:|asset:|blob:)/i.test(source)) return null;
   // Markdown 图片相对路径以当前文章目录为基准，并手动归一化 "." 与 ".."。
-  const normalizedSource = decodeURIComponent(source).replace(/\//g, "\\");
-  const directory = documentPath.replace(/[\\/][^\\/]+$/, "");
-  const segments = `${directory}\\${normalizedSource}`.split("\\");
+  let decodedSource: string;
+  try {
+    decodedSource = decodeURIComponent(source);
+  } catch {
+    decodedSource = source;
+  }
+  const normalizedSource = decodedSource.replace(/\//g, "\\");
+  const absolute = /^(?:[A-Za-z]:\\|\\\\)/.test(normalizedSource);
+  if (!absolute && !documentPath) return null;
+  const directory = documentPath?.replace(/[\\/][^\\/]+$/, "") ?? "";
+  const segments = (absolute ? normalizedSource : `${directory}\\${normalizedSource}`).split("\\");
   const resolved: string[] = [];
   for (const segment of segments) {
     if (!segment || segment === ".") continue;
@@ -1405,7 +1432,49 @@ function resolveArticleImage(source: string, documentPath: string | null): strin
     else resolved.push(segment);
   }
   const prefix = /^[A-Za-z]:/.test(resolved[0] ?? "") ? "" : "\\";
-  return convertFileSrc(prefix + resolved.join("\\"));
+  return prefix + resolved.join("\\");
+}
+
+function resolveArticleImage(source: string, documentPath: string | null): string {
+  const localPath = resolveLocalArticleImagePath(source, documentPath);
+  return localPath ? convertFileSrc(localPath) : source;
+}
+
+async function embedLocalImages(html: string): Promise<{
+  html: string;
+  embeddedCount: number;
+  failedCount: number;
+}> {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const localImages = Array.from(document.querySelectorAll<HTMLImageElement>(
+    'img[src^="wenrender-local-image:"]',
+  ));
+  let embeddedCount = 0;
+  let failedCount = 0;
+
+  await Promise.all(localImages.map(async (image) => {
+    const encodedPath = image.getAttribute("src")?.slice("wenrender-local-image:".length);
+    if (!encodedPath) {
+      failedCount += 1;
+      return;
+    }
+    try {
+      const filePath = decodeURIComponent(encodedPath);
+      const dataUrl = await invoke<string>("read_image_data_url", { filePath });
+      image.setAttribute("src", dataUrl);
+      embeddedCount += 1;
+    } catch {
+      // 转换失败时仍保留应用内可预览的地址，避免把内部占位协议写进剪贴板。
+      try {
+        image.setAttribute("src", convertFileSrc(decodeURIComponent(encodedPath)));
+      } catch {
+        image.removeAttribute("src");
+      }
+      failedCount += 1;
+    }
+  }));
+
+  return { html: document.body.innerHTML, embeddedCount, failedCount };
 }
 
 export default App;
