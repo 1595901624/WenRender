@@ -1,4 +1,4 @@
-import { Maximize2, Minus, Square, X } from "lucide-react";
+import { Copy, Maximize2, Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useState } from "react";
 
@@ -20,12 +20,20 @@ export function TitleBar() {
   const platform = getDesktopPlatform();
   const isMacOS = platform === "macos";
   const [isMacControlsHovered, setIsMacControlsHovered] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
 
   const run = (action: () => Promise<void>) => {
     if (isTauriWindow()) void action();
   };
 
-  const toggleMaximize = () => run(() => getCurrentWindow().toggleMaximize());
+  const toggleMaximize = () => {
+    if (!isTauriWindow()) return;
+    void (async () => {
+      const appWindow = getCurrentWindow();
+      await appWindow.toggleMaximize();
+      setIsMaximized(await appWindow.isMaximized());
+    })();
+  };
   const startDragging = () => run(() => getCurrentWindow().startDragging());
 
   const controls = (
@@ -57,10 +65,16 @@ export function TitleBar() {
         className={isMacOS ? "window-control mac-maximize" : "window-control"}
         data-tauri-drag-region="false"
         onClick={toggleMaximize}
-        aria-label="最大化或还原窗口"
-        title="最大化/还原"
+        aria-label={isMaximized ? "还原窗口" : "最大化窗口"}
+        title={isMaximized ? "还原" : "最大化"}
       >
-        {isMacOS ? <Maximize2 className="mac-window-symbol" size={8} strokeWidth={2.2} /> : <Square size={13} strokeWidth={1.8} />}
+        {isMacOS ? (
+          <Maximize2 className="mac-window-symbol" size={8} strokeWidth={2.2} />
+        ) : isMaximized ? (
+          <Copy size={13} strokeWidth={1.8} />
+        ) : (
+          <Square size={13} strokeWidth={1.8} />
+        )}
       </button>
     </div>
   );
