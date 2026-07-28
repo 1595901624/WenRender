@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
 import {
   ChevronDown,
@@ -56,15 +56,19 @@ export function FileSidebar({
       return new Set();
     }
   });
+  const previousDirectoryPaths = useRef<Set<string>>(new Set());
   const standaloneDocuments = documents.filter((document) => !document.directoryId);
 
   useEffect(() => {
-    // 新打开的项目默认展开根目录，同时保留用户之前操作过的子目录状态。
+    // 仅默认展开本次新打开的项目根目录，保留已打开目录的当前展开状态。
     setExpanded((current) => {
       const next = new Set(current);
-      directories.forEach((directory) => next.add(directory.path));
+      directories
+        .filter((directory) => !previousDirectoryPaths.current.has(directory.path))
+        .forEach((directory) => next.add(directory.path));
       return next;
     });
+    previousDirectoryPaths.current = new Set(directories.map((directory) => directory.path));
   }, [directories]);
 
   useEffect(() => {
