@@ -22,7 +22,7 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function resolveLocalArticleImagePath(source: string, documentPath: string | null): string | null {
+export function resolveLocalArticleImagePath(source: string, documentPath: string | null): string | null {
   if (/^(?:https?:|data:|asset:|blob:)/i.test(source)) return null;
   let decodedSource: string;
   try { decodedSource = decodeURIComponent(source); } catch { decodedSource = source; }
