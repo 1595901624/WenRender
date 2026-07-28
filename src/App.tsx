@@ -27,6 +27,7 @@ import {
 } from "./lib/typography";
 import { loadWorkspaceSession, saveWorkspaceSession, type WorkspaceSession } from "./lib/workspace";
 import type { DirectoryNode, FileInspection, FileSnapshot, Notice, OpenDirectory, OpenDocument } from "./types";
+import appLogoUrl from "../app-logo-radius.webp";
 
 type SaveOutcome = {
   status: "saved" | "conflict";
@@ -621,6 +622,7 @@ function App() {
       <div className="flex h-screen min-w-[900px] overflow-hidden bg-[#f3f3f1] text-ink dark:bg-[#171815] dark:text-stone-100">
         {sidebarOpen && (
           <FileSidebar
+            logoSrc={appLogoUrl}
             documents={documents}
             directories={directories}
             activeId={activeId}
@@ -1157,7 +1159,7 @@ function AboutSettings() {
 
       <section className="mt-8 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
         <div className="flex items-center gap-4 border-b border-stone-200 px-5 py-5 dark:border-stone-700">
-          <img src="/app_logo_radius.png" alt="文染标志" className="h-16 w-16 object-cover" />
+          <img src={appLogoUrl} alt="文染标志" className="h-16 w-16 object-cover" />
           <div className="min-w-0">
             <div className="text-lg font-semibold text-stone-900 dark:text-stone-100">文染 WenRender</div>
             <div className="mt-1 text-sm text-stone-500 dark:text-stone-400">面向微信公众号写作场景的跨平台 Markdown 编辑器。</div>
