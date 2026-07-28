@@ -31,7 +31,7 @@ const headings = [
 ] as const;
 
 export function TypographyPanel({ theme, overrides, onChange, onReset, onClose }: Props) {
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(true);
   const resolved = resolveArticleTypography(theme, overrides);
   const customCount = countTypographyOverrides(overrides);
 
