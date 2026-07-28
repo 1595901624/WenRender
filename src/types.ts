@@ -59,3 +59,23 @@ export type Notice = {
   message: string;
   tone: "success" | "error" | "neutral";
 } | null;
+
+export type ArticleImageInput =
+  | {
+    kind: "clipboard";
+    name: string | null;
+    mimeType: string;
+    dataBase64: string;
+  }
+  | {
+    kind: "file";
+    path: string;
+  };
+
+export type StoredArticleImage = {
+  relativePath: string;
+  fileName: string;
+  originalSize: number;
+  savedSize: number;
+  compressed: boolean;
+};

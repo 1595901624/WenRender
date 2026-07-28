@@ -58,3 +58,14 @@ pub(crate) struct SaveOutcome {
     pub(crate) reason: Option<String>,
     pub(crate) snapshot: Option<FileSnapshot>,
 }
+
+/// 保存到文章资源目录后的图片信息。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoredArticleImage {
+    pub(crate) relative_path: String,
+    pub(crate) file_name: String,
+    pub(crate) original_size: u64,
+    pub(crate) saved_size: u64,
+    pub(crate) compressed: bool,
+}

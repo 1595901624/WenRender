@@ -8,7 +8,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
-import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, ExternalLink, Eye, FileDown, FolderOpen, Github, Info, Link2, Menu, Monitor, Moon, Palette, PanelLeftClose, PanelLeftOpen, Save, Settings, Smartphone, SplitSquareHorizontal, Sun, Type } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, ExternalLink, Eye, FileDown, FolderOpen, Github, Image as ImageIcon, Info, Link2, Menu, Monitor, Moon, Palette, PanelLeftClose, PanelLeftOpen, Save, Settings, Smartphone, SplitSquareHorizontal, Sun, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
@@ -17,6 +17,7 @@ import { TypographyPanel } from "./components/TypographyPanel";
 import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
 import { hasUnsavedChanges, needsSaveAttention } from "./lib/document";
+import { defaultImageSettings, parseImageSettings, type ImageSettings } from "./lib/imageSettings";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
 import {
@@ -26,7 +27,16 @@ import {
   type TypographyOverridesByTheme,
 } from "./lib/typography";
 import { loadWorkspaceSession, saveWorkspaceSession, type WorkspaceSession } from "./lib/workspace";
-import type { DirectoryNode, FileInspection, FileSnapshot, Notice, OpenDirectory, OpenDocument } from "./types";
+import type {
+  ArticleImageInput,
+  DirectoryNode,
+  FileInspection,
+  FileSnapshot,
+  Notice,
+  OpenDirectory,
+  OpenDocument,
+  StoredArticleImage,
+} from "./types";
 import appLogoUrl from "../app-logo-radius.webp";
 
 type SaveOutcome = {
@@ -49,7 +59,7 @@ type PendingClose = {
 
 type AppColorScheme = "system" | "light" | "dark";
 type AppPage = "workspace" | "settings";
-type SettingsSection = "general" | "about";
+type SettingsSection = "general" | "images" | "about";
 
 const welcome = `# 欢迎使用文染
 
@@ -99,6 +109,9 @@ function App() {
     const saved = window.localStorage.getItem("wenrender-color-scheme");
     return saved === "light" || saved === "dark" ? saved : "system";
   });
+  const [imageSettings, setImageSettings] = useState<ImageSettings>(() => (
+    parseImageSettings(window.localStorage.getItem("wenrender-image-settings"))
+  ));
   const [darkInterface, setDarkInterface] = useState(() => document.documentElement.classList.contains("dark"));
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
@@ -238,6 +251,10 @@ function App() {
   }, [typographyOverridesByTheme]);
 
   useEffect(() => {
+    window.localStorage.setItem("wenrender-image-settings", JSON.stringify(imageSettings));
+  }, [imageSettings]);
+
+  useEffect(() => {
     window.localStorage.setItem("wenrender-sidebar-open", String(sidebarOpen));
   }, [sidebarOpen]);
 
@@ -293,14 +310,80 @@ function App() {
     [rendered, active.name, baseTheme, typographyOverrides],
   );
 
-  const notify = (message: string, tone: NonNullable<Notice>["tone"] = "neutral") => {
+  const notify = useCallback((message: string, tone: NonNullable<Notice>["tone"] = "neutral") => {
     setNotice({ message, tone });
     window.setTimeout(() => setNotice(null), 2200);
-  };
+  }, []);
 
   const updateActive = useCallback((content: string) => {
     setDocuments((items) => items.map((item) => item.id === activeId ? { ...item, content } : item));
   }, [activeId]);
+
+  const importArticleImages = useCallback(async (images: ArticleImageInput[]): Promise<string[]> => {
+    if (!active.path || active.externalState === "deleted") {
+      notify("请先保存当前文章，再粘贴或拖入图片", "error");
+      return [];
+    }
+    if (!("__TAURI_INTERNALS__" in window)) {
+      notify("图片落盘功能需要在文染桌面应用中使用", "error");
+      return [];
+    }
+
+    const markdownImages: string[] = [];
+    const storedImages: StoredArticleImage[] = [];
+    let failedCount = 0;
+    let lastError = "";
+    for (const image of images) {
+      try {
+        const stored = await invoke<StoredArticleImage>("save_article_image", {
+          documentPath: active.path,
+          sourcePath: image.kind === "file" ? image.path : null,
+          originalName: image.kind === "clipboard" ? image.name : null,
+          mimeType: image.kind === "clipboard" ? image.mimeType : null,
+          dataBase64: image.kind === "clipboard" ? image.dataBase64 : null,
+          compress: imageSettings.compress,
+          maxDimension: imageSettings.maxDimension,
+          jpegQuality: imageSettings.jpegQuality,
+        });
+        storedImages.push(stored);
+        markdownImages.push(`![${markdownImageAlt(stored.fileName)}](${stored.relativePath})`);
+      } catch (error) {
+        failedCount += 1;
+        lastError = String(error);
+        console.error("图片导入失败", error);
+      }
+    }
+
+    const containingDirectory = directories.find((directory) => (
+      directory.id === active.directoryId || pathIsInside(active.path!, directory.path)
+    ));
+    if (containingDirectory && storedImages.length > 0) {
+      void invoke<Omit<OpenDirectory, "id">>("scan_directory", {
+        directoryPath: containingDirectory.path,
+      }).then((tree) => {
+        setDirectories((items) => items.map((item) => (
+          item.id === containingDirectory.id ? { ...tree, id: item.id } : item
+        )));
+      });
+    }
+
+    if (storedImages.length > 0) {
+      const originalBytes = storedImages.reduce((sum, image) => sum + image.originalSize, 0);
+      const savedBytes = storedImages.reduce((sum, image) => sum + image.savedSize, 0);
+      const savedDetail = imageSettings.compress && savedBytes < originalBytes
+        ? `，减少 ${formatFileSize(originalBytes - savedBytes)}`
+        : "";
+      const failedDetail = failedCount > 0 ? `；${failedCount} 张失败` : "";
+      notify(
+        `已保存 ${storedImages.length} 张图片到 assets${savedDetail}${failedDetail}`,
+        failedCount > 0 ? "neutral" : "success",
+      );
+    } else {
+      const detail = failedCount === 1 && lastError ? `：${lastError}` : `（${failedCount} 张）`;
+      notify(`图片导入失败${detail}`, "error");
+    }
+    return markdownImages;
+  }, [active.directoryId, active.externalState, active.path, directories, imageSettings, notify]);
 
   const newDocument = () => {
     const id = createId();
@@ -885,7 +968,12 @@ function App() {
         </header>
 
         {activePage === "settings" ? (
-          <SettingsPage colorScheme={colorScheme} onColorSchemeChange={setColorScheme} />
+          <SettingsPage
+            colorScheme={colorScheme}
+            onColorSchemeChange={setColorScheme}
+            imageSettings={imageSettings}
+            onImageSettingsChange={setImageSettings}
+          />
         ) : (
         <main className="relative flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1">
@@ -901,6 +989,7 @@ function App() {
                     value={active.content}
                     dark={darkInterface}
                     onChange={updateActive}
+                    onImportImages={importArticleImages}
                     onScrollRatio={(ratio) => { if (syncScroll) previewRef.current?.scrollToRatio(ratio); }}
                   />
                 </div>
@@ -1040,9 +1129,13 @@ function App() {
 function SettingsPage({
   colorScheme,
   onColorSchemeChange,
+  imageSettings,
+  onImageSettingsChange,
 }: {
   colorScheme: AppColorScheme;
   onColorSchemeChange: (value: AppColorScheme) => void;
+  imageSettings: ImageSettings;
+  onImageSettingsChange: (value: ImageSettings) => void;
 }) {
   const [section, setSection] = useState<SettingsSection>("general");
 
@@ -1054,6 +1147,7 @@ function SettingsPage({
         <div className="mt-3 space-y-1">
           {([
             ["general", Settings, "通用"],
+            ["images", ImageIcon, "图片"],
             ["about", Info, "关于"],
           ] as const).map(([value, Icon, label]) => (
             <button
@@ -1075,9 +1169,13 @@ function SettingsPage({
 
       <ScrollArea.Root className="min-w-0 flex-1 overflow-hidden">
         <ScrollArea.Viewport className="h-full w-full">
-          {section === "general"
-            ? <GeneralSettings colorScheme={colorScheme} onColorSchemeChange={onColorSchemeChange} />
-            : <AboutSettings />}
+          {section === "general" && (
+            <GeneralSettings colorScheme={colorScheme} onColorSchemeChange={onColorSchemeChange} />
+          )}
+          {section === "images" && (
+            <ImageSettingsPage settings={imageSettings} onChange={onImageSettingsChange} />
+          )}
+          {section === "about" && <AboutSettings />}
         </ScrollArea.Viewport>
         <ScrollArea.Scrollbar orientation="vertical" className="flex w-2.5 touch-none select-none p-0.5">
           <ScrollArea.Thumb className="min-h-8 flex-1 rounded-full bg-stone-300 dark:bg-stone-700" />
@@ -1139,6 +1237,108 @@ function GeneralSettings({
               </button>
             ))}
           </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ImageSettingsPage({
+  settings,
+  onChange,
+}: {
+  settings: ImageSettings;
+  onChange: (value: ImageSettings) => void;
+}) {
+  return (
+    <div className="mx-auto w-full max-w-3xl px-10 py-9">
+      <div>
+        <h1 className="text-xl font-semibold text-stone-900 dark:text-stone-100">图片设置</h1>
+        <p className="mt-1.5 text-sm text-stone-500 dark:text-stone-400">
+          管理粘贴或拖入文章的本地图片。图片统一保存到文章同级的 assets 目录。
+        </p>
+      </div>
+
+      <section className="mt-8 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
+        <div className="flex items-start justify-between gap-6 border-b border-stone-200 px-5 py-4 dark:border-stone-700">
+          <div>
+            <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">导入时压缩图片</div>
+            <div className="mt-1 max-w-xl text-xs leading-5 text-stone-500 dark:text-stone-400">
+              默认关闭，关闭时完整保留原始文件。开启后会缩小超出限制的 PNG、JPEG 和 WebP，
+              并重新编码；GIF、SVG 等格式仍保持原样。
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={settings.compress}
+            aria-label="导入时压缩图片"
+            onClick={() => onChange({ ...settings, compress: !settings.compress })}
+            className={clsx(
+              "relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition",
+              settings.compress ? "bg-[#2f8f5b]" : "bg-stone-300 dark:bg-stone-600",
+            )}
+          >
+            <span
+              className={clsx(
+                "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition",
+                settings.compress ? "left-[22px]" : "left-0.5",
+              )}
+            />
+          </button>
+        </div>
+
+        <div className={clsx("space-y-6 px-5 py-5 transition", !settings.compress && "opacity-45")}>
+          <label className="block">
+            <span className="text-sm font-medium text-stone-800 dark:text-stone-200">最大边长</span>
+            <span className="ml-2 text-xs text-stone-400">保持长宽比，不会放大小图</span>
+            <select
+              value={settings.maxDimension}
+              disabled={!settings.compress}
+              onChange={(event) => onChange({ ...settings, maxDimension: Number(event.target.value) })}
+              className="mt-2 block h-9 w-48 rounded-lg border border-stone-200 bg-white px-3 text-sm text-stone-700 outline-none transition focus:border-stone-500 disabled:cursor-not-allowed dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
+            >
+              <option value={1280}>1280 px</option>
+              <option value={1920}>1920 px（推荐）</option>
+              <option value={2560}>2560 px</option>
+              <option value={3840}>3840 px</option>
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="flex items-center justify-between gap-4">
+              <span>
+                <span className="text-sm font-medium text-stone-800 dark:text-stone-200">JPEG 质量</span>
+                <span className="ml-2 text-xs text-stone-400">只影响 JPEG 图片</span>
+              </span>
+              <span className="font-mono text-xs text-stone-500 dark:text-stone-400">{settings.jpegQuality}</span>
+            </span>
+            <input
+              type="range"
+              min={60}
+              max={95}
+              step={1}
+              value={settings.jpegQuality}
+              disabled={!settings.compress}
+              onChange={(event) => onChange({ ...settings, jpegQuality: Number(event.target.value) })}
+              className="mt-3 w-full accent-[#2f8f5b] disabled:cursor-not-allowed"
+            />
+            <span className="mt-1 flex justify-between text-[11px] text-stone-400">
+              <span>文件更小</span>
+              <span>画质更高</span>
+            </span>
+          </label>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 border-t border-stone-100 px-5 py-3 dark:border-stone-700">
+          <span className="text-xs text-stone-400">设置仅影响之后导入的图片，不修改已有文件。</span>
+          <button
+            type="button"
+            className="rounded-lg px-3 py-1.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
+            onClick={() => onChange(defaultImageSettings)}
+          >
+            恢复默认
+          </button>
         </div>
       </section>
     </div>
@@ -1409,6 +1609,22 @@ function applySnapshot(document: OpenDocument, snapshot: FileSnapshot): OpenDocu
     readOnly: snapshot.readOnly,
     externalState: "normal",
   };
+}
+
+function markdownImageAlt(fileName: string): string {
+  const stem = fileName.replace(/\.[^.]+$/, "").replace(/-\d+$/, "");
+  return (stem || "图片").replace(/[\\[\]]/g, "\\$&");
+}
+
+function pathIsInside(filePath: string, directoryPath: string): boolean {
+  const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return normalize(filePath).startsWith(`${normalize(directoryPath)}/`);
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function resolveLocalArticleImagePath(source: string, documentPath: string | null): string | null {

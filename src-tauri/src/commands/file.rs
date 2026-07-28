@@ -1,11 +1,18 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
+use image::{DynamicImage, ImageFormat};
 
-use crate::models::{FileFingerprint, FileInspection, FileSnapshot, SaveOutcome};
+use crate::models::{
+    FileFingerprint, FileInspection, FileSnapshot, SaveOutcome, StoredArticleImage,
+};
+
+const MAX_IMPORTED_IMAGE_SIZE: usize = 100 * 1024 * 1024;
 
 /// 读取 UTF-8 文本文件。
 ///
@@ -34,6 +41,101 @@ pub(crate) fn read_image_data_url(file_path: String) -> Result<String, String> {
     Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
 }
 
+/// 将粘贴板数据或磁盘图片保存到 Markdown 文件同级的 assets 目录。
+///
+/// 未开启压缩时原始字节会原样写入；开启后仅重新编码 PNG、JPEG 与 WebP，
+/// GIF、SVG 等格式始终保持原文件，避免动画或矢量信息丢失。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn save_article_image(
+    document_path: String,
+    source_path: Option<String>,
+    original_name: Option<String>,
+    mime_type: Option<String>,
+    data_base64: Option<String>,
+    compress: bool,
+    max_dimension: u32,
+    jpeg_quality: u8,
+) -> Result<StoredArticleImage, String> {
+    let document = PathBuf::from(document_path);
+    if !document.is_file() {
+        return Err("请先保存当前文章，再粘贴或拖入图片".to_string());
+    }
+    let document_directory = document
+        .parent()
+        .ok_or_else(|| "无法确定文章所在目录".to_string())?;
+
+    let (bytes, supplied_name, supplied_extension) = if let Some(source_path) = source_path {
+        let source = PathBuf::from(source_path);
+        if !source.is_file() {
+            return Err(format!("图片不存在或不是普通文件：{}", source.display()));
+        }
+        let extension = supported_image_extension(&source)
+            .ok_or_else(|| format!("不支持的图片格式：{}", source.display()))?
+            .to_string();
+        let bytes = fs::read(&source)
+            .map_err(|error| format!("无法读取图片 {}：{error}", source.display()))?;
+        let name = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_owned);
+        (bytes, name, extension)
+    } else {
+        let encoded = data_base64.ok_or_else(|| "没有收到图片数据".to_string())?;
+        let encoded = encoded
+            .split_once(',')
+            .map(|(_, payload)| payload)
+            .unwrap_or(encoded.as_str());
+        let bytes = STANDARD
+            .decode(encoded)
+            .map_err(|_| "剪贴板图片数据无效".to_string())?;
+        let extension = image_extension_from_mime(mime_type.as_deref().unwrap_or(""))
+            .ok_or_else(|| "剪贴板中的图片格式暂不支持".to_string())?
+            .to_string();
+        (bytes, original_name, extension)
+    };
+
+    if bytes.is_empty() {
+        return Err("图片内容为空".to_string());
+    }
+    if bytes.len() > MAX_IMPORTED_IMAGE_SIZE {
+        return Err("单张图片不能超过 100 MB".to_string());
+    }
+
+    let assets_directory = document_directory.join("assets");
+    fs::create_dir_all(&assets_directory).map_err(|error| {
+        format!(
+            "无法创建图片资源目录 {}：{error}",
+            assets_directory.display()
+        )
+    })?;
+
+    let stem = image_file_stem(supplied_name.as_deref());
+    let extension = normalize_image_extension(&supplied_extension);
+    let target = unique_image_path(&assets_directory, &stem, extension);
+    let (output, was_compressed) = maybe_compress_image(
+        &bytes,
+        extension,
+        compress,
+        max_dimension.clamp(320, 7680),
+        jpeg_quality.clamp(60, 95),
+    )?;
+    safe_write(&target, &output)?;
+
+    let file_name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "生成的图片文件名无效".to_string())?
+        .to_string();
+    Ok(StoredArticleImage {
+        relative_path: format!("./assets/{file_name}"),
+        file_name,
+        original_size: bytes.len() as u64,
+        saved_size: output.len() as u64,
+        compressed: was_compressed,
+    })
+}
+
 fn image_mime_type(path: &Path) -> Option<&'static str> {
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
         "png" => Some("image/png"),
@@ -47,6 +149,130 @@ fn image_mime_type(path: &Path) -> Option<&'static str> {
         "tif" | "tiff" => Some("image/tiff"),
         _ => None,
     }
+}
+
+fn supported_image_extension(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "png" => Some("png"),
+        "jpg" | "jpeg" | "jpe" => Some("jpg"),
+        "gif" => Some("gif"),
+        "webp" => Some("webp"),
+        "svg" => Some("svg"),
+        "bmp" => Some("bmp"),
+        "avif" => Some("avif"),
+        "ico" => Some("ico"),
+        "tif" | "tiff" => Some("tiff"),
+        _ => None,
+    }
+}
+
+fn image_extension_from_mime(mime: &str) -> Option<&'static str> {
+    match mime.to_ascii_lowercase().as_str() {
+        "image/png" => Some("png"),
+        "image/jpeg" | "image/jpg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "image/svg+xml" => Some("svg"),
+        "image/bmp" => Some("bmp"),
+        "image/avif" => Some("avif"),
+        "image/x-icon" | "image/vnd.microsoft.icon" => Some("ico"),
+        "image/tiff" => Some("tiff"),
+        _ => None,
+    }
+}
+
+fn normalize_image_extension(extension: &str) -> &str {
+    match extension {
+        "jpeg" | "jpe" => "jpg",
+        "tif" => "tiff",
+        value => value,
+    }
+}
+
+fn image_file_stem(original_name: Option<&str>) -> String {
+    let original = original_name
+        .and_then(|name| Path::new(name).file_stem())
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("image");
+    let mut sanitized = String::with_capacity(original.len());
+    let mut previous_separator = false;
+    for character in original.chars() {
+        if character.is_alphanumeric() || matches!(character, '-' | '_') {
+            sanitized.push(character);
+            previous_separator = false;
+        } else if !previous_separator {
+            sanitized.push('-');
+            previous_separator = true;
+        }
+    }
+    let sanitized = sanitized.trim_matches('-');
+    if sanitized.is_empty() || sanitized.eq_ignore_ascii_case("image") {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default();
+        format!("image-{timestamp}")
+    } else {
+        sanitized.chars().take(80).collect()
+    }
+}
+
+fn unique_image_path(directory: &Path, stem: &str, extension: &str) -> PathBuf {
+    let candidate = directory.join(format!("{stem}.{extension}"));
+    if !candidate.exists() {
+        return candidate;
+    }
+    for suffix in 2..=10_000 {
+        let candidate = directory.join(format!("{stem}-{suffix}.{extension}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    directory.join(format!("{stem}-{unique}.{extension}"))
+}
+
+fn maybe_compress_image(
+    bytes: &[u8],
+    extension: &str,
+    compress: bool,
+    max_dimension: u32,
+    jpeg_quality: u8,
+) -> Result<(Vec<u8>, bool), String> {
+    if !compress || !matches!(extension, "png" | "jpg" | "webp") {
+        return Ok((bytes.to_vec(), false));
+    }
+
+    let format = match extension {
+        "png" => ImageFormat::Png,
+        "jpg" => ImageFormat::Jpeg,
+        "webp" => ImageFormat::WebP,
+        _ => unreachable!(),
+    };
+    let decoded = image::load_from_memory_with_format(bytes, format)
+        .map_err(|error| format!("无法解码图片以进行压缩：{error}"))?;
+    let resized = resize_to_max_dimension(decoded, max_dimension);
+    let mut output = Vec::new();
+    if extension == "jpg" {
+        JpegEncoder::new_with_quality(&mut output, jpeg_quality)
+            .encode_image(&resized)
+            .map_err(|error| format!("无法压缩 JPEG 图片：{error}"))?;
+    } else {
+        resized
+            .write_to(&mut Cursor::new(&mut output), format)
+            .map_err(|error| format!("无法压缩图片：{error}"))?;
+    }
+    Ok((output, true))
+}
+
+fn resize_to_max_dimension(image: DynamicImage, maximum: u32) -> DynamicImage {
+    if image.width() <= maximum && image.height() <= maximum {
+        return image;
+    }
+    image.resize(maximum, maximum, FilterType::Lanczos3)
 }
 
 /// 读取文件正文、换行符、BOM、只读状态和磁盘指纹。
@@ -271,6 +497,83 @@ mod tests {
         assert_eq!(data_url, "data:image/png;base64,iVBORw==");
 
         fs::remove_file(path).expect("remove temporary image");
+    }
+
+    #[test]
+    fn stores_an_unmodified_article_image_in_assets() {
+        let root =
+            std::env::temp_dir().join(format!("wenrender-assets-test-{}", std::process::id()));
+        let article = root.join("article.md");
+        fs::create_dir_all(&root).expect("create temporary directory");
+        fs::write(&article, "# article").expect("create article");
+        let png = STANDARD.encode([0x89, b'P', b'N', b'G']);
+
+        let stored = save_article_image(
+            article.to_string_lossy().into_owned(),
+            None,
+            Some("pasted image.png".to_string()),
+            Some("image/png".to_string()),
+            Some(png),
+            false,
+            1920,
+            85,
+        )
+        .expect("store image");
+
+        assert!(stored.relative_path.starts_with("./assets/pasted-image"));
+        assert_eq!(stored.original_size, stored.saved_size);
+        assert!(!stored.compressed);
+        assert_eq!(
+            fs::read(root.join(&stored.relative_path[2..])).expect("read stored image"),
+            [0x89, b'P', b'N', b'G']
+        );
+
+        let second = save_article_image(
+            article.to_string_lossy().into_owned(),
+            None,
+            Some("pasted image.png".to_string()),
+            Some("image/png".to_string()),
+            Some(STANDARD.encode([0x89, b'P', b'N', b'G'])),
+            false,
+            1920,
+            85,
+        )
+        .expect("store a second image");
+        assert_ne!(stored.relative_path, second.relative_path);
+
+        fs::remove_dir_all(root).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn resizes_an_article_image_when_compression_is_enabled() {
+        let root =
+            std::env::temp_dir().join(format!("wenrender-resize-test-{}", std::process::id()));
+        let article = root.join("article.md");
+        fs::create_dir_all(&root).expect("create temporary directory");
+        fs::write(&article, "# article").expect("create article");
+
+        let source = DynamicImage::new_rgb8(800, 400);
+        let mut encoded = Vec::new();
+        source
+            .write_to(&mut Cursor::new(&mut encoded), ImageFormat::Png)
+            .expect("encode source image");
+        let stored = save_article_image(
+            article.to_string_lossy().into_owned(),
+            None,
+            Some("large.png".to_string()),
+            Some("image/png".to_string()),
+            Some(STANDARD.encode(encoded)),
+            true,
+            320,
+            85,
+        )
+        .expect("compress image");
+
+        let output = image::open(root.join(&stored.relative_path[2..])).expect("read output image");
+        assert_eq!((output.width(), output.height()), (320, 160));
+        assert!(stored.compressed);
+
+        fs::remove_dir_all(root).expect("remove temporary directory");
     }
 
     #[test]
