@@ -46,10 +46,10 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ html,
     const window = iframe.contentWindow;
     const document = iframe.contentDocument;
     if (window && document) {
-      const root = document.documentElement;
-      if (root) {
-        const maximum = Math.max(0, root.scrollHeight - root.clientHeight);
-        if (maximum > 0) pendingScrollRatio.current = window.scrollY / maximum;
+      const scrollElement = getScrollElement(document);
+      if (scrollElement) {
+        const maximum = getMaximumScroll(scrollElement, document);
+        if (maximum > 0) pendingScrollRatio.current = scrollElement.scrollTop / maximum;
       }
     }
     iframe.srcdoc = html;
@@ -60,11 +60,11 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ html,
       const window = frame.current?.contentWindow;
       const document = frame.current?.contentDocument;
       if (!window || !document) return;
-      const root = document.documentElement;
-      if (!root) return;
-      const maximum = Math.max(0, root.scrollHeight - root.clientHeight);
+      const scrollElement = getScrollElement(document);
+      if (!scrollElement) return;
+      const maximum = getMaximumScroll(scrollElement, document);
       suppressScroll.current = true;
-      window.scrollTo({ top: maximum * ratio });
+      scrollElement.scrollTop = maximum * ratio;
       requestAnimationFrame(() => { suppressScroll.current = false; });
     },
   }), []);
@@ -73,20 +73,27 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ html,
     const window = frame.current?.contentWindow;
     const document = frame.current?.contentDocument;
     if (!window || !document) return;
-    const root = document.documentElement;
-    if (!root) return;
     // 每次 srcdoc 重载后 iframe 的 window 会变化，因此必须在 onLoad 中重新绑定。
-    window.onscroll = () => {
+    const reportScroll = () => {
       if (suppressScroll.current) return;
-      const maximum = Math.max(1, root.scrollHeight - root.clientHeight);
-      onScrollRef.current?.(window.scrollY / maximum);
+      const scrollElement = getScrollElement(document);
+      if (!scrollElement) return;
+      const maximum = Math.max(1, getMaximumScroll(scrollElement, document));
+      onScrollRef.current?.(scrollElement.scrollTop / maximum);
     };
+    // 不同 WebView 会把 iframe 的页面滚动事件派发给不同目标；全部监听以确保反向同步。
+    const scrollElement = getScrollElement(document);
+    scrollElement?.addEventListener("scroll", reportScroll, { passive: true });
+    document.addEventListener("scroll", reportScroll, { passive: true });
+    window.addEventListener("scroll", reportScroll, { passive: true });
     if (pendingScrollRatio.current !== null) {
       const ratio = pendingScrollRatio.current;
       pendingScrollRatio.current = null;
-      const maximum = Math.max(0, root.scrollHeight - root.clientHeight);
+      const scrollElement = getScrollElement(document);
+      if (!scrollElement) return;
+      const maximum = getMaximumScroll(scrollElement, document);
       suppressScroll.current = true;
-      window.scrollTo({ top: maximum * ratio });
+      scrollElement.scrollTop = maximum * ratio;
       requestAnimationFrame(() => { suppressScroll.current = false; });
     }
   };
@@ -151,3 +158,13 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview({ html,
     </div>
   );
 });
+
+function getScrollElement(document: Document): HTMLElement | null {
+  return document.scrollingElement as HTMLElement | null ?? document.documentElement;
+}
+
+function getMaximumScroll(scrollElement: HTMLElement, document: Document): number {
+  // 部分 WebView 将页面滚动高度保存在 body，取两者较大值可兼容网页和手机预览。
+  const contentHeight = Math.max(scrollElement.scrollHeight, document.body?.scrollHeight ?? 0);
+  return Math.max(0, contentHeight - scrollElement.clientHeight);
+}
