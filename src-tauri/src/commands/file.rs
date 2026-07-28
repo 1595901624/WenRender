@@ -49,6 +49,7 @@ pub(crate) fn read_image_data_url(file_path: String) -> Result<String, String> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn save_article_image(
     document_path: String,
+    storage_directory: Option<String>,
     source_path: Option<String>,
     original_name: Option<String>,
     mime_type: Option<String>,
@@ -102,7 +103,10 @@ pub(crate) fn save_article_image(
         return Err("单张图片不能超过 100 MB".to_string());
     }
 
-    let assets_directory = document_directory.join("assets");
+    let assets_directory = storage_directory
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| document_directory.join("assets"));
     fs::create_dir_all(&assets_directory).map_err(|error| {
         format!(
             "无法创建图片资源目录 {}：{error}",
@@ -128,12 +132,27 @@ pub(crate) fn save_article_image(
         .ok_or_else(|| "生成的图片文件名无效".to_string())?
         .to_string();
     Ok(StoredArticleImage {
-        relative_path: format!("./assets/{file_name}"),
+        relative_path: article_image_path(document_directory, &target),
         file_name,
         original_size: bytes.len() as u64,
         saved_size: output.len() as u64,
         compressed: was_compressed,
     })
+}
+
+fn article_image_path(document_directory: &Path, image_path: &Path) -> String {
+    let path = pathdiff::diff_paths(image_path, document_directory)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| image_path.to_path_buf());
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    if normalized.starts_with("../")
+        || normalized.starts_with("./")
+        || Path::new(&normalized).is_absolute()
+    {
+        normalized
+    } else {
+        format!("./{normalized}")
+    }
 }
 
 fn image_mime_type(path: &Path) -> Option<&'static str> {
@@ -511,6 +530,7 @@ mod tests {
         let stored = save_article_image(
             article.to_string_lossy().into_owned(),
             None,
+            None,
             Some("pasted image.png".to_string()),
             Some("image/png".to_string()),
             Some(png),
@@ -531,6 +551,7 @@ mod tests {
         let second = save_article_image(
             article.to_string_lossy().into_owned(),
             None,
+            None,
             Some("pasted image.png".to_string()),
             Some("image/png".to_string()),
             Some(STANDARD.encode([0x89, b'P', b'N', b'G'])),
@@ -540,6 +561,37 @@ mod tests {
         )
         .expect("store a second image");
         assert_ne!(stored.relative_path, second.relative_path);
+
+        fs::remove_dir_all(root).expect("remove temporary directory");
+    }
+
+    #[test]
+    fn stores_an_article_image_in_a_custom_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "wenrender-custom-assets-test-{}",
+            std::process::id()
+        ));
+        let article_directory = root.join("articles");
+        let custom_directory = root.join("shared images");
+        let article = article_directory.join("article.md");
+        fs::create_dir_all(&article_directory).expect("create article directory");
+        fs::write(&article, "# article").expect("create article");
+
+        let stored = save_article_image(
+            article.to_string_lossy().into_owned(),
+            Some(custom_directory.to_string_lossy().into_owned()),
+            None,
+            Some("cover.png".to_string()),
+            Some("image/png".to_string()),
+            Some(STANDARD.encode([0x89, b'P', b'N', b'G'])),
+            false,
+            1920,
+            85,
+        )
+        .expect("store image in custom directory");
+
+        assert_eq!(stored.relative_path, "../shared images/cover.png");
+        assert!(custom_directory.join("cover.png").is_file());
 
         fs::remove_dir_all(root).expect("remove temporary directory");
     }
@@ -559,6 +611,7 @@ mod tests {
             .expect("encode source image");
         let stored = save_article_image(
             article.to_string_lossy().into_owned(),
+            None,
             None,
             Some("large.png".to_string()),
             Some("image/png".to_string()),

@@ -337,6 +337,9 @@ function App() {
       try {
         const stored = await invoke<StoredArticleImage>("save_article_image", {
           documentPath: active.path,
+          storageDirectory: imageSettings.storageMode === "custom"
+            ? imageSettings.customDirectory
+            : null,
           sourcePath: image.kind === "file" ? image.path : null,
           originalName: image.kind === "clipboard" ? image.name : null,
           mimeType: image.kind === "clipboard" ? image.mimeType : null,
@@ -346,7 +349,9 @@ function App() {
           jpegQuality: imageSettings.jpegQuality,
         });
         storedImages.push(stored);
-        markdownImages.push(`![${markdownImageAlt(stored.fileName)}](${stored.relativePath})`);
+        markdownImages.push(
+          `![${markdownImageAlt(stored.fileName)}](${markdownImageDestination(stored.relativePath)})`,
+        );
       } catch (error) {
         failedCount += 1;
         lastError = String(error);
@@ -375,7 +380,7 @@ function App() {
         : "";
       const failedDetail = failedCount > 0 ? `；${failedCount} 张失败` : "";
       notify(
-        `已保存 ${storedImages.length} 张图片到 assets${savedDetail}${failedDetail}`,
+        `已保存 ${storedImages.length} 张图片${savedDetail}${failedDetail}`,
         failedCount > 0 ? "neutral" : "success",
       );
     } else {
@@ -384,6 +389,24 @@ function App() {
     }
     return markdownImages;
   }, [active.directoryId, active.externalState, active.path, directories, imageSettings, notify]);
+
+  const chooseImageStorageDirectory = useCallback(async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: "选择图片存放目录",
+      });
+      if (!selected || Array.isArray(selected)) return;
+      setImageSettings((settings) => ({
+        ...settings,
+        storageMode: "custom",
+        customDirectory: selected,
+      }));
+    } catch (error) {
+      notify(`选择图片目录失败：${String(error)}`, "error");
+    }
+  }, [notify]);
 
   const newDocument = () => {
     const id = createId();
@@ -973,6 +996,7 @@ function App() {
             onColorSchemeChange={setColorScheme}
             imageSettings={imageSettings}
             onImageSettingsChange={setImageSettings}
+            onChooseImageStorageDirectory={chooseImageStorageDirectory}
           />
         ) : (
         <main className="relative flex min-h-0 flex-1">
@@ -1131,11 +1155,13 @@ function SettingsPage({
   onColorSchemeChange,
   imageSettings,
   onImageSettingsChange,
+  onChooseImageStorageDirectory,
 }: {
   colorScheme: AppColorScheme;
   onColorSchemeChange: (value: AppColorScheme) => void;
   imageSettings: ImageSettings;
   onImageSettingsChange: (value: ImageSettings) => void;
+  onChooseImageStorageDirectory: () => void;
 }) {
   const [section, setSection] = useState<SettingsSection>("general");
 
@@ -1173,7 +1199,11 @@ function SettingsPage({
             <GeneralSettings colorScheme={colorScheme} onColorSchemeChange={onColorSchemeChange} />
           )}
           {section === "images" && (
-            <ImageSettingsPage settings={imageSettings} onChange={onImageSettingsChange} />
+            <ImageSettingsPage
+              settings={imageSettings}
+              onChange={onImageSettingsChange}
+              onChooseDirectory={onChooseImageStorageDirectory}
+            />
           )}
           {section === "about" && <AboutSettings />}
         </ScrollArea.Viewport>
@@ -1246,20 +1276,98 @@ function GeneralSettings({
 function ImageSettingsPage({
   settings,
   onChange,
+  onChooseDirectory,
 }: {
   settings: ImageSettings;
   onChange: (value: ImageSettings) => void;
+  onChooseDirectory: () => void;
 }) {
   return (
     <div className="mx-auto w-full max-w-3xl px-10 py-9">
       <div>
         <h1 className="text-xl font-semibold text-stone-900 dark:text-stone-100">图片设置</h1>
         <p className="mt-1.5 text-sm text-stone-500 dark:text-stone-400">
-          管理粘贴或拖入文章的本地图片。图片统一保存到文章同级的 assets 目录。
+          管理粘贴或拖入文章的本地图片，包括存放目录、尺寸和压缩质量。
         </p>
       </div>
 
       <section className="mt-8 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
+        <div className="border-b border-stone-200 px-5 py-4 dark:border-stone-700">
+          <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">存放位置</div>
+          <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">
+            默认在每篇 Markdown 文章旁创建 assets 目录。选择自定义文件夹后，文章会优先使用相对路径引用图片。
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 px-5 py-5">
+          <button
+            type="button"
+            aria-pressed={settings.storageMode === "article-assets"}
+            onClick={() => onChange({ ...settings, storageMode: "article-assets" })}
+            className={clsx(
+              "relative min-h-28 rounded-xl border p-4 text-left transition",
+              settings.storageMode === "article-assets"
+                ? "border-stone-700 bg-stone-50 ring-1 ring-stone-700 dark:border-stone-300 dark:bg-stone-800 dark:ring-stone-300"
+                : "border-stone-200 hover:border-stone-300 hover:bg-stone-50 dark:border-stone-700 dark:hover:border-stone-600 dark:hover:bg-stone-800/70",
+            )}
+          >
+            <FolderOpen size={18} className="text-stone-600 dark:text-stone-300" />
+            <span className="mt-3 block text-sm font-medium text-stone-900 dark:text-stone-100">文章 assets 目录</span>
+            <span className="mt-1 block text-xs leading-5 text-stone-500 dark:text-stone-400">
+              每篇文章使用同级的 ./assets
+            </span>
+            {settings.storageMode === "article-assets" && (
+              <span className="absolute right-3 top-3 grid h-5 w-5 place-items-center rounded-full bg-stone-800 text-white dark:bg-stone-100 dark:text-stone-900">
+                <Check size={12} strokeWidth={3} />
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            aria-pressed={settings.storageMode === "custom"}
+            onClick={() => {
+              if (settings.customDirectory) {
+                onChange({ ...settings, storageMode: "custom" });
+              } else {
+                onChooseDirectory();
+              }
+            }}
+            className={clsx(
+              "relative min-h-28 rounded-xl border p-4 text-left transition",
+              settings.storageMode === "custom"
+                ? "border-stone-700 bg-stone-50 ring-1 ring-stone-700 dark:border-stone-300 dark:bg-stone-800 dark:ring-stone-300"
+                : "border-stone-200 hover:border-stone-300 hover:bg-stone-50 dark:border-stone-700 dark:hover:border-stone-600 dark:hover:bg-stone-800/70",
+            )}
+          >
+            <FolderOpen size={18} className="text-stone-600 dark:text-stone-300" />
+            <span className="mt-3 block text-sm font-medium text-stone-900 dark:text-stone-100">自定义文件夹</span>
+            <span className="mt-1 block truncate text-xs leading-5 text-stone-500 dark:text-stone-400">
+              {settings.customDirectory ?? "选择一个固定的图片目录"}
+            </span>
+            {settings.storageMode === "custom" && (
+              <span className="absolute right-3 top-3 grid h-5 w-5 place-items-center rounded-full bg-stone-800 text-white dark:bg-stone-100 dark:text-stone-900">
+                <Check size={12} strokeWidth={3} />
+              </span>
+            )}
+          </button>
+        </div>
+        {settings.customDirectory && (
+          <div className="flex items-center justify-between gap-4 border-t border-stone-100 px-5 py-3 dark:border-stone-700">
+            <span className="min-w-0 truncate font-mono text-xs text-stone-500 dark:text-stone-400" title={settings.customDirectory}>
+              {settings.customDirectory}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
+              onClick={onChooseDirectory}
+            >
+              更换文件夹
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section className="mt-4 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
         <div className="flex items-start justify-between gap-6 border-b border-stone-200 px-5 py-4 dark:border-stone-700">
           <div>
             <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">导入时压缩图片</div>
@@ -1614,6 +1722,12 @@ function applySnapshot(document: OpenDocument, snapshot: FileSnapshot): OpenDocu
 function markdownImageAlt(fileName: string): string {
   const stem = fileName.replace(/\.[^.]+$/, "").replace(/-\d+$/, "");
   return (stem || "图片").replace(/[\\[\]]/g, "\\$&");
+}
+
+function markdownImageDestination(path: string): string {
+  return path.split("/").map((segment) => (
+    /^[A-Za-z]:$/.test(segment) ? segment : encodeURIComponent(segment)
+  )).join("/");
 }
 
 function pathIsInside(filePath: string, directoryPath: string): boolean {
