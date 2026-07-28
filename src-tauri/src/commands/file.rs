@@ -9,7 +9,7 @@ use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat};
 
 use crate::models::{
-    FileFingerprint, FileInspection, FileSnapshot, SaveOutcome, StoredArticleImage,
+    CreatedMarkdownFile, FileFingerprint, FileInspection, FileSnapshot, SaveOutcome, StoredArticleImage,
 };
 
 const MAX_IMPORTED_IMAGE_SIZE: usize = 100 * 1024 * 1024;
@@ -300,6 +300,53 @@ pub(crate) fn read_file_snapshot(file_path: String) -> Result<FileSnapshot, Stri
     read_snapshot(Path::new(&file_path))
 }
 
+/// 在指定的已打开目录中直接创建一个空 Markdown 文件。
+/// 文件名只允许是单个名称，避免调用方借此写入到目标目录之外。
+#[tauri::command]
+pub(crate) fn create_markdown_file(
+    directory_path: String,
+    file_name: String,
+) -> Result<CreatedMarkdownFile, String> {
+    let directory = PathBuf::from(directory_path);
+    if !directory.is_dir() {
+        return Err("目标目录不存在或不可访问".to_string());
+    }
+
+    let requested = file_name.trim();
+    if requested.is_empty() {
+        return Err("请输入文件名".to_string());
+    }
+    if requested == "." || requested == ".." || requested.contains(['/', '\\']) {
+        return Err("文件名不能包含路径分隔符".to_string());
+    }
+
+    let name = if requested.to_ascii_lowercase().ends_with(".md") {
+        requested.to_string()
+    } else {
+        format!("{requested}.md")
+    };
+    let path = directory.join(&name);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("文件已存在：{name}")
+            } else {
+                format!("无法创建文件 {}：{error}", path.display())
+            }
+        })?;
+    file.write_all(b"")
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("无法写入文件 {}：{error}", path.display()))?;
+
+    Ok(CreatedMarkdownFile {
+        path: path.to_string_lossy().into_owned(),
+        snapshot: read_snapshot(&path)?,
+    })
+}
+
 /// 检查文件是否存在及是否被外部程序修改，不返回文件正文。
 #[tauri::command]
 pub(crate) fn inspect_text_file(file_path: String) -> Result<FileInspection, String> {
@@ -494,6 +541,32 @@ fn safe_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creates_markdown_file_directly_in_requested_directory() {
+        let directory = std::env::temp_dir().join(format!(
+            "wenrender-create-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).expect("create temporary directory");
+
+        let created = create_markdown_file(
+            directory.to_string_lossy().into_owned(),
+            "draft".to_string(),
+        )
+        .expect("create markdown file");
+
+        assert_eq!(PathBuf::from(&created.path), directory.join("draft.md"));
+        assert!(PathBuf::from(&created.path).is_file());
+        assert!(created.snapshot.content.is_empty());
+        assert!(create_markdown_file(
+            directory.to_string_lossy().into_owned(),
+            "nested/draft".to_string(),
+        )
+        .is_err());
+
+        fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
 
     #[test]
     fn reads_a_persisted_text_file() {

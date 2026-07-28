@@ -25,7 +25,7 @@ import {
 } from "./lib/typography";
 import { loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace";
 import { SettingsPage } from "./features/settings/SettingsPage";
-import { AppDialogs } from "./features/workspace/AppDialogs";
+import { AppDialogs, type NewMarkdownTarget } from "./features/workspace/AppDialogs";
 import {
   applySnapshot as applyWorkspaceSnapshot,
   createDocumentFromSnapshot as createWorkspaceDocument,
@@ -68,6 +68,15 @@ type PendingClose = {
   kind: "document" | "directory" | "application";
   documentIds: string[];
   directoryId?: string;
+};
+
+type NewMarkdownRequest = NewMarkdownTarget & {
+  directoryId: string;
+};
+
+type CreatedMarkdownFile = {
+  path: string;
+  snapshot: FileSnapshot;
 };
 
 type AppColorScheme = "system" | "light" | "dark";
@@ -127,6 +136,7 @@ function App() {
   const [darkInterface, setDarkInterface] = useState(() => document.documentElement.classList.contains("dark"));
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
+  const [newMarkdownRequest, setNewMarkdownRequest] = useState<NewMarkdownRequest | null>(null);
   const editorRef = useRef<EditorHandle>(null);
   const previewRef = useRef<PreviewHandle>(null);
   const documentsRef = useRef(documents);
@@ -434,6 +444,41 @@ function App() {
       externalState: "normal",
     }]);
     setActiveId(id);
+  };
+
+  const createMarkdownInDirectory = async (name: string): Promise<boolean> => {
+    if (!newMarkdownRequest) return false;
+    const request = newMarkdownRequest;
+    try {
+      const created = await invoke<CreatedMarkdownFile>("create_markdown_file", {
+        directoryPath: request.directoryPath,
+        fileName: name,
+      });
+      const rootDirectory = directories.find((directory) => directory.id === request.directoryId);
+      if (!rootDirectory) {
+        notify("目录已关闭，无法创建文件", "error");
+        return false;
+      }
+      const tree = await invoke<Omit<OpenDirectory, "id">>("scan_directory", {
+        directoryPath: rootDirectory.path,
+      });
+      setDirectories((items) => items.map((directory) => (
+        directory.id === request.directoryId ? { ...tree, id: directory.id } : directory
+      )));
+      const id = createId();
+      setDocuments((items) => [...items, {
+        ...createWorkspaceDocument(id, created.path, fileName(created.path), created.snapshot),
+        directoryId: request.directoryId,
+      }]);
+      setActiveId(id);
+      setActivePage("workspace");
+      setNewMarkdownRequest(null);
+      notify(`已在「${request.directoryName}」中创建 ${fileName(created.path)}`, "success");
+      return true;
+    } catch (error) {
+      notify(`创建文件失败：${String(error)}`, "error");
+      return false;
+    }
   };
 
   const openDocument = async () => {
@@ -778,6 +823,9 @@ function App() {
               newDocument();
               setActivePage("workspace");
             }}
+            onNewInDirectory={(directoryId, directoryPath, directoryName) => {
+              setNewMarkdownRequest({ directoryId, directoryPath, directoryName });
+            }}
             onOpenFiles={() => {
               setActivePage("workspace");
               void openDocument();
@@ -1089,6 +1137,7 @@ function App() {
           conflictDocument={saveConflict
             ? documents.find((item) => item.id === saveConflict.documentId)
             : undefined}
+          newMarkdownTarget={newMarkdownRequest}
           onCancelPendingClose={() => setPendingClose(null)}
           onDiscardPendingClose={() => {
             if (pendingClose) void finishPendingClose(pendingClose, true);
@@ -1098,6 +1147,8 @@ function App() {
           onSaveConflictAs={() => void saveConflictAs()}
           onReloadConflict={reloadConflictFromDisk}
           onOverwriteConflict={() => void overwriteConflict()}
+          onCancelNewMarkdown={() => setNewMarkdownRequest(null)}
+          onCreateNewMarkdown={createMarkdownInDirectory}
         />
 
         {notice && (

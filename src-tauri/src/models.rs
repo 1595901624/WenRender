@@ -41,6 +41,14 @@ pub(crate) struct FileSnapshot {
     pub(crate) read_only: bool,
 }
 
+/// 在已打开目录中创建 Markdown 文件后的文件信息。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CreatedMarkdownFile {
+    pub(crate) path: String,
+    pub(crate) snapshot: FileSnapshot,
+}
+
 /// 不读取正文时返回的文件状态，用于检测外部修改和删除。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

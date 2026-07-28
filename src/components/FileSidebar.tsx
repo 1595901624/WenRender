@@ -10,6 +10,7 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  FilePlus2,
   PanelTopOpen,
   Plus,
   X,
@@ -29,6 +30,7 @@ type Props = {
   onClose: (id: string) => void;
   onCloseDirectory: (id: string) => void;
   onNew: () => void;
+  onNewInDirectory: (directoryId: string, directoryPath: string, directoryName: string) => void;
   onOpenFiles: () => void;
   onOpenFolder: () => void;
 };
@@ -44,6 +46,7 @@ export function FileSidebar({
   onClose,
   onCloseDirectory,
   onNew,
+  onNewInDirectory,
   onOpenFiles,
   onOpenFolder,
 }: Props) {
@@ -102,7 +105,7 @@ export function FileSidebar({
             <div className="mt-1 text-[9px] uppercase tracking-[0.17em] text-stone-400">WenRender</div>
           </div>
         </div>
-        <button className="icon-button" onClick={onNew} title="新建文章"><Plus size={17} /></button>
+        <button className="icon-button" onClick={onNew} title="新建草稿"><Plus size={17} /></button>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-1.5 px-1">
@@ -188,6 +191,13 @@ export function FileSidebar({
                     </button>
                     <button
                       className="mr-1 rounded p-1 text-stone-400 opacity-0 hover:bg-stone-200 hover:text-stone-700 group-hover:opacity-100 dark:hover:bg-stone-700 dark:hover:text-stone-200"
+                      onClick={() => onNewInDirectory(directory.id, directory.path, directory.name)}
+                      title="在此目录新建 Markdown"
+                    >
+                      <FilePlus2 size={13} />
+                    </button>
+                    <button
+                      className="mr-1 rounded p-1 text-stone-400 opacity-0 hover:bg-stone-200 hover:text-stone-700 group-hover:opacity-100 dark:hover:bg-stone-700 dark:hover:text-stone-200"
                       onClick={() => onCloseDirectory(directory.id)}
                       title="关闭目录"
                     >
@@ -205,6 +215,7 @@ export function FileSidebar({
                       documents={documents}
                       onToggle={toggleExpanded}
                       onSelect={onSelectTreeFile}
+                      onNewInDirectory={onNewInDirectory}
                     />
                   )}
                 </div>
@@ -230,6 +241,7 @@ function DirectoryNodes({
   documents,
   onToggle,
   onSelect,
+  onNewInDirectory,
 }: {
   nodes: DirectoryNode[];
   directoryId: string;
@@ -240,6 +252,7 @@ function DirectoryNodes({
   documents: OpenDocument[];
   onToggle: (path: string) => void;
   onSelect: (node: DirectoryNode, directoryId: string) => void;
+  onNewInDirectory: (directoryId: string, directoryPath: string, directoryName: string) => void;
 }) {
   // “仅 MD”模式仍保留包含 Markdown 的祖先目录，否则用户无法展开到目标文件。
   const visibleNodes = nodes.filter((node) => showAllFiles || node.isMarkdown || (node.isDirectory && hasMarkdown(node)));
@@ -252,16 +265,25 @@ function DirectoryNodes({
           const isExpanded = expanded.has(node.path);
           return (
             <div key={node.path}>
-              <button
-                className="flex w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md py-1.5 pr-2 text-left text-[13px] text-stone-600 hover:bg-[#eaeae7] dark:text-stone-400 dark:hover:bg-[#272825]"
-                style={{ paddingLeft }}
-                onClick={() => onToggle(node.path)}
-                title={node.path}
-              >
-                {isExpanded ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
-                {isExpanded ? <FolderOpen size={14} className="shrink-0" /> : <Folder size={14} className="shrink-0" />}
-                <span className="min-w-0 flex-1 truncate">{node.name}</span>
-              </button>
+              <div className="group flex min-w-0 items-center rounded-md hover:bg-[#eaeae7] dark:hover:bg-[#272825]">
+                <button
+                  className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden py-1.5 pr-1 text-left text-[13px] text-stone-600 dark:text-stone-400"
+                  style={{ paddingLeft }}
+                  onClick={() => onToggle(node.path)}
+                  title={node.path}
+                >
+                  {isExpanded ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
+                  {isExpanded ? <FolderOpen size={14} className="shrink-0" /> : <Folder size={14} className="shrink-0" />}
+                  <span className="min-w-0 flex-1 truncate">{node.name}</span>
+                </button>
+                <button
+                  className="mr-1 rounded p-1 text-stone-400 opacity-0 hover:bg-stone-200 hover:text-stone-700 group-hover:opacity-100 dark:hover:bg-stone-700 dark:hover:text-stone-200"
+                  onClick={() => onNewInDirectory(directoryId, node.path, node.name)}
+                  title="在此目录新建 Markdown"
+                >
+                  <FilePlus2 size={13} />
+                </button>
+              </div>
               {isExpanded && (
                 <DirectoryNodes
                   nodes={node.children}
@@ -273,6 +295,7 @@ function DirectoryNodes({
                   documents={documents}
                   onToggle={onToggle}
                   onSelect={onSelect}
+                  onNewInDirectory={onNewInDirectory}
                 />
               )}
             </div>

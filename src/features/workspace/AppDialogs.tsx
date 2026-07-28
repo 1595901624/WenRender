@@ -1,4 +1,5 @@
-import { AlertTriangle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, FilePlus2 } from "lucide-react";
 import type { FileSnapshot, OpenDocument } from "../../types";
 
 type PendingClose = {
@@ -13,10 +14,16 @@ type SaveConflict = {
   diskSnapshot?: FileSnapshot;
 };
 
+export type NewMarkdownTarget = {
+  directoryName: string;
+  directoryPath: string;
+};
+
 type AppDialogsProps = {
   pendingClose: PendingClose | null;
   saveConflict: SaveConflict | null;
   conflictDocument?: OpenDocument;
+  newMarkdownTarget: NewMarkdownTarget | null;
   onCancelPendingClose: () => void;
   onDiscardPendingClose: () => void;
   onSavePendingClose: () => void;
@@ -24,6 +31,8 @@ type AppDialogsProps = {
   onSaveConflictAs: () => void;
   onReloadConflict: () => void;
   onOverwriteConflict: () => void;
+  onCancelNewMarkdown: () => void;
+  onCreateNewMarkdown: (name: string) => Promise<boolean>;
 };
 
 /**
@@ -34,6 +43,7 @@ export function AppDialogs({
   pendingClose,
   saveConflict,
   conflictDocument,
+  newMarkdownTarget,
   onCancelPendingClose,
   onDiscardPendingClose,
   onSavePendingClose,
@@ -41,6 +51,8 @@ export function AppDialogs({
   onSaveConflictAs,
   onReloadConflict,
   onOverwriteConflict,
+  onCancelNewMarkdown,
+  onCreateNewMarkdown,
 }: AppDialogsProps) {
   return (
     <>
@@ -110,7 +122,77 @@ export function AppDialogs({
           </div>
         </div>
       )}
+
+      {newMarkdownTarget && (
+        <NewMarkdownDialog
+          key={newMarkdownTarget.directoryPath}
+          target={newMarkdownTarget}
+          onCancel={onCancelNewMarkdown}
+          onCreate={onCreateNewMarkdown}
+        />
+      )}
     </>
+  );
+}
+
+function NewMarkdownDialog({
+  target,
+  onCancel,
+  onCreate,
+}: {
+  target: NewMarkdownTarget;
+  onCancel: () => void;
+  onCreate: (name: string) => Promise<boolean>;
+}) {
+  const [name, setName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    const created = await onCreate(name);
+    if (!created) setSubmitting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[85] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
+      <form onSubmit={submit} className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl dark:border-stone-700 dark:bg-[#242522]">
+        <div className="flex items-start gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-200">
+            <FilePlus2 size={18} />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-stone-900 dark:text-stone-100">新建 Markdown 文件</h2>
+            <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">将在「{target.directoryName}」中直接创建文件。</p>
+          </div>
+        </div>
+        <label className="mt-5 block">
+          <span className="text-xs font-medium text-stone-600 dark:text-stone-300">文件名</span>
+          <input
+            ref={inputRef}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="例如：活动策划"
+            disabled={submitting}
+            className="mt-1.5 h-10 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm text-stone-900 outline-none placeholder:text-stone-400 focus:border-stone-500 focus:ring-2 focus:ring-stone-200 disabled:opacity-60 dark:border-stone-600 dark:bg-[#1d1e1b] dark:text-stone-100 dark:focus:ring-stone-700"
+          />
+          <span className="mt-1.5 block text-[11px] text-stone-400">留空扩展名时会自动补为 .md</span>
+        </label>
+        <p className="mt-3 truncate text-[11px] text-stone-400" title={target.directoryPath}>{target.directoryPath}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100 disabled:opacity-60 dark:text-stone-300 dark:hover:bg-stone-800" onClick={onCancel} disabled={submitting}>取消</button>
+          <button type="submit" className="rounded-lg bg-[#20211f] px-3.5 py-2 text-sm font-medium text-white hover:bg-black disabled:opacity-60" disabled={submitting}>
+            {submitting ? "正在创建…" : "创建文件"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
