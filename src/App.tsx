@@ -11,6 +11,7 @@ import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
 import { Preview, type PreviewHandle, type PreviewMode } from "./components/Preview";
 import { TypographyPanel } from "./components/TypographyPanel";
+import { TitleBar } from "./components/TitleBar";
 import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
 import { hasUnsavedChanges, needsSaveAttention } from "./lib/document";
@@ -801,7 +802,9 @@ function App() {
 
   return (
     <Tooltip.Provider delayDuration={350}>
-      <div className="flex h-screen min-w-[900px] overflow-hidden bg-[#f3f3f1] text-ink dark:bg-[#171815] dark:text-stone-100">
+      <div className="flex h-screen min-w-[900px] flex-col overflow-hidden bg-[#f3f3f1] text-ink dark:bg-[#171815] dark:text-stone-100">
+        <TitleBar />
+        <div className="flex min-h-0 flex-1 overflow-hidden">
         {sidebarOpen && (
           <FileSidebar
             logoSrc={appLogoUrl}
@@ -1129,6 +1132,7 @@ function App() {
           )}
         </main>
         )}
+        </div>
         </div>
 
         <AppDialogs
