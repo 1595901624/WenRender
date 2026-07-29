@@ -82,17 +82,35 @@ export function TitleBar() {
   return (
     <div
       className={`titlebar titlebar-${platform}`}
-      data-tauri-drag-region
       onMouseDown={(event) => {
         const clickedControl = event.target instanceof Element && event.target.closest(".window-controls");
-        if (event.button === 0 && !clickedControl) startDragging();
+        if (event.button !== 0 || clickedControl) return;
+
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const stopTracking = () => {
+          document.removeEventListener("mousemove", handleMove);
+          document.removeEventListener("mouseup", stopTracking);
+        };
+        const handleMove = (moveEvent: MouseEvent) => {
+          const distance = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+          if (distance < 4) return;
+          stopTracking();
+          startDragging();
+        };
+
+        document.addEventListener("mousemove", handleMove);
+        document.addEventListener("mouseup", stopTracking);
       }}
       onDoubleClick={(event) => {
-        if (!(event.target instanceof Element) || !event.target.closest(".window-controls")) toggleMaximize();
+        if (!(event.target instanceof Element) || !event.target.closest(".window-controls")) {
+          event.preventDefault();
+          toggleMaximize();
+        }
       }}
     >
       {isMacOS && controls}
-      <div className="titlebar-brand" data-tauri-drag-region>
+      <div className="titlebar-brand">
         <span className="titlebar-name">文染</span>
         {/* <span className="titlebar-subtitle">Markdown 编辑器</span> */}
       </div>

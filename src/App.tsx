@@ -51,7 +51,6 @@ import type {
   OpenDocument,
   StoredArticleImage,
 } from "./types";
-import appLogoUrl from "../app-logo-radius.webp";
 
 type SaveOutcome = {
   status: "saved" | "conflict";
@@ -807,7 +806,6 @@ function App() {
         <div className="flex min-h-0 flex-1 overflow-hidden">
         {sidebarOpen && (
           <FileSidebar
-            logoSrc={appLogoUrl}
             documents={documents}
             directories={directories}
             activeId={activeId}

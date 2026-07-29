@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
 import {
   ChevronDown,
@@ -20,7 +21,6 @@ import { hasUnsavedChanges } from "../lib/document";
 import type { DirectoryNode, OpenDirectory, OpenDocument } from "../types";
 
 type Props = {
-  logoSrc: string;
   documents: OpenDocument[];
   directories: OpenDirectory[];
   activeId: string;
@@ -36,7 +36,6 @@ type Props = {
 };
 
 export function FileSidebar({
-  logoSrc,
   documents,
   directories,
   activeId,
@@ -92,35 +91,75 @@ export function FileSidebar({
   };
 
   return (
-    <aside className="flex h-full w-[240px] shrink-0 flex-col bg-[#f3f3f1] px-2.5 pb-2.5 pt-3 dark:bg-[#171815]">
-      <div className="flex h-11 items-center justify-between px-2">
-        <div className="flex items-center gap-2.5">
-          <img
-            src={logoSrc}
-            alt="文染标志"
-            className="h-8 w-8 rounded-lg object-cover shadow-sm ring-1 ring-black/5 dark:ring-white/10"
-          />
-          <div>
-            <div className="text-sm font-semibold leading-none text-[#20211f] dark:text-stone-100">文染</div>
-            <div className="mt-1 text-[9px] uppercase tracking-[0.17em] text-stone-400">WenRender</div>
-          </div>
+    <aside className="flex h-full w-[240px] shrink-0 flex-col bg-[#f3f3f1] px-2.5 pb-2.5 pt-2 dark:bg-[#171815]">
+      <div className="flex h-10 shrink-0 items-center justify-between px-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <h2 className="text-sm font-semibold text-[#20211f] dark:text-stone-100">文件</h2>
+          <span className="text-[10px] tabular-nums text-stone-400">{standaloneDocuments.length}</span>
         </div>
-        <button className="icon-button" onClick={onNew} title="新建草稿"><Plus size={17} /></button>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={onNew}
+            title="新建草稿"
+            aria-label="新建草稿"
+          >
+            <Plus size={16} />
+          </button>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                className="inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs font-medium text-stone-600 transition hover:bg-stone-200 hover:text-stone-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-moss-500 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white"
+                aria-label="打开"
+                title="打开文件或目录"
+              >
+                <FolderOpen size={15} />
+                <span>打开</span>
+                <ChevronDown size={12} className="text-stone-400" />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={6}
+                className="z-50 min-w-40 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]"
+              >
+                <DropdownMenu.Item onSelect={onOpenFiles} className="menu-item">
+                  <PanelTopOpen size={15} />
+                  打开文件
+                </DropdownMenu.Item>
+                <DropdownMenu.Item onSelect={onOpenFolder} className="menu-item">
+                  <FolderOpen size={15} />
+                  打开目录
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-1.5 px-1">
-        <button className="sidebar-action" onClick={onOpenFiles}><PanelTopOpen size={15} />打开文件</button>
-        <button className="sidebar-action" onClick={onOpenFolder}><FolderOpen size={15} />打开目录</button>
-      </div>
-
-      <div className="mb-2 mt-5 flex items-center justify-between px-2">
-        <span className="text-[11px] font-medium text-stone-500">文件</span>
-        <span className="text-[10px] text-stone-400">{standaloneDocuments.length}</span>
-      </div>
-
-      <ScrollArea.Root className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+      <ScrollArea.Root className="relative mt-1 min-h-0 min-w-0 flex-1 overflow-hidden">
         {/* Radix 默认的 table 包装层会被长文件名撑宽，这里强制为固定宽度块级元素。 */}
         <ScrollArea.Viewport className="h-full w-full overflow-x-hidden overscroll-contain px-1 pb-4 [&>div]:!block [&>div]:!min-w-0 [&>div]:!w-full">
+          {standaloneDocuments.length === 0 && directories.length === 0 && (
+            <div className="mx-1 mt-3 rounded-xl border border-dashed border-stone-300 px-3 py-5 text-center dark:border-stone-700">
+              <p className="text-xs text-stone-500 dark:text-stone-400">暂无打开的文件</p>
+              <div className="mt-3 grid grid-cols-2 gap-1.5">
+                <button type="button" className="sidebar-action" onClick={onOpenFiles}>
+                  <PanelTopOpen size={14} />
+                  打开文件
+                </button>
+                <button type="button" className="sidebar-action" onClick={onOpenFolder}>
+                  <FolderOpen size={14} />
+                  打开目录
+                </button>
+              </div>
+              <p className="mt-2 text-[10px] text-stone-400">也可以拖放文件到窗口</p>
+            </div>
+          )}
+
           <div className="min-w-0 space-y-0.5">
             {standaloneDocuments.map((document) => {
               const dirty = hasUnsavedChanges(document);
@@ -161,7 +200,7 @@ export function FileSidebar({
           </div>
 
           {directories.length > 0 && (
-            <div className="mb-1 mt-5 flex items-center justify-between px-2">
+            <div className={clsx("mb-1 flex items-center justify-between px-2", standaloneDocuments.length > 0 ? "mt-4" : "mt-2")}>
               <span className="text-[11px] font-medium text-stone-500">目录</span>
               <button
                 className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-stone-500 hover:bg-stone-200 dark:text-stone-400 dark:hover:bg-stone-800"
