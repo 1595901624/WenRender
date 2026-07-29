@@ -882,7 +882,7 @@ function App() {
           </div>
 
           <div className="flex items-center justify-end gap-1">
-            <ToolbarButton label="打开文件" onClick={openDocument}><FolderOpen size={17} /></ToolbarButton>
+            {/* <ToolbarButton label="打开文件" onClick={openDocument}><FolderOpen size={17} /></ToolbarButton> */}
             <ToolbarButton label="保存" onClick={saveDocument}><Save size={17} /></ToolbarButton>
             <ToolbarButton label="设置" onClick={() => setActivePage("settings")}><Settings size={17} /></ToolbarButton>
             <div className="mx-1 h-5 w-px bg-stone-200 dark:bg-stone-700" />
