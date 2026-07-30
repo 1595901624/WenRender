@@ -1,4 +1,4 @@
-import { FileText, ListTree, Search } from "lucide-react";
+import { Blocks, FileText, ListTree, Search } from "lucide-react";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
 import clsx from "clsx";
 import type { MarkdownHeading } from "../lib/articleTools";
@@ -10,6 +10,7 @@ type Props = {
   onSelect: (heading: MarkdownHeading) => void;
   onShowFiles: () => void;
   onShowSearch: () => void;
+  onShowBlocks: () => void;
 };
 
 export function OutlineSidebar({
@@ -19,6 +20,7 @@ export function OutlineSidebar({
   onSelect,
   onShowFiles,
   onShowSearch,
+  onShowBlocks,
 }: Props) {
   return (
     <aside className="flex h-full w-[240px] shrink-0 flex-col bg-[#f3f3f1] px-2.5 pb-2.5 pt-2 dark:bg-[#171815]">
@@ -29,6 +31,9 @@ export function OutlineSidebar({
           <span className="text-[10px] tabular-nums text-stone-400">{headings.length}</span>
         </div>
         <div className="flex items-center gap-0.5">
+          <button type="button" className="icon-button" onClick={onShowBlocks} title="可复用内容块" aria-label="可复用内容块">
+            <Blocks size={16} />
+          </button>
           <button type="button" className="icon-button" onClick={onShowSearch} title="工作区全文搜索" aria-label="工作区全文搜索">
             <Search size={16} />
           </button>

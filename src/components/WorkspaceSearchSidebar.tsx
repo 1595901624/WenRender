@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { FileText, ListTree, Search, X } from "lucide-react";
+import { Blocks, FileText, ListTree, Search, X } from "lucide-react";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
 import type { DirectoryNode, OpenDirectory, OpenDocument } from "../types";
 
@@ -23,6 +23,7 @@ type Props = {
   onOpenResult: (target: WorkspaceSearchTarget) => void;
   onShowFiles: () => void;
   onShowOutline: () => void;
+  onShowBlocks: () => void;
 };
 
 export function WorkspaceSearchSidebar({
@@ -31,6 +32,7 @@ export function WorkspaceSearchSidebar({
   onOpenResult,
   onShowFiles,
   onShowOutline,
+  onShowBlocks,
 }: Props) {
   const [query, setQuery] = useState("");
   const results = useMemo(
@@ -46,6 +48,9 @@ export function WorkspaceSearchSidebar({
           <h2 className="text-sm font-semibold text-[#20211f] dark:text-stone-100">全文搜索</h2>
         </div>
         <div className="flex items-center gap-0.5">
+          <button type="button" className="icon-button" onClick={onShowBlocks} title="可复用内容块" aria-label="可复用内容块">
+            <Blocks size={16} />
+          </button>
           <button type="button" className="icon-button" onClick={onShowOutline} title="文章大纲" aria-label="文章大纲">
             <ListTree size={16} />
           </button>

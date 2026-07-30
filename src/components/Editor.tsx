@@ -1,6 +1,6 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { basicSetup } from "codemirror";
-import { Compartment, EditorState } from "@codemirror/state";
+import { Compartment, EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultHighlightStyle, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
@@ -8,6 +8,8 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { tags } from "@lezer/highlight";
 import { openSearchPanel } from "@codemirror/search";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { Blocks } from "lucide-react";
+import type { ContentBlock } from "../lib/contentBlocks";
 import type { ArticleImageInput } from "../types";
 
 type Props = {
@@ -18,11 +20,22 @@ type Props = {
   onImportImages?: (images: ArticleImageInput[]) => Promise<string[]>;
   initialCursorPosition?: number;
   onCursorPositionChange?: (position: number) => void;
+  contentBlocks?: ContentBlock[];
+};
+
+type SlashMenuState = {
+  from: number;
+  to: number;
+  query: string;
+  left: number;
+  top: number;
 };
 
 export type EditorHandle = {
   scrollToRatio: (ratio: number) => void;
   scrollToPosition: (position: number) => void;
+  getSelectedText: () => string;
+  insertText: (text: string) => void;
   openSearch: () => void;
   focus: () => void;
 };
@@ -35,6 +48,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
   onImportImages,
   initialCursorPosition,
   onCursorPositionChange,
+  contentBlocks = [],
 }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView>();
@@ -45,10 +59,30 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
   const onScrollRef = useRef(onScrollRatio);
   const onImportImagesRef = useRef(onImportImages);
   const onCursorPositionRef = useRef(onCursorPositionChange);
+  const contentBlocksRef = useRef(contentBlocks);
+  const slashMenuRef = useRef<SlashMenuState | null>(null);
+  const slashSelectionRef = useRef(0);
+  const slashListRef = useRef<HTMLDivElement>(null);
+  const [slashMenu, setSlashMenu] = useState<SlashMenuState | null>(null);
+  const [slashSelection, setSlashSelection] = useState(0);
   onChangeRef.current = onChange;
   onScrollRef.current = onScrollRatio;
   onImportImagesRef.current = onImportImages;
   onCursorPositionRef.current = onCursorPositionChange;
+  contentBlocksRef.current = contentBlocks;
+  slashMenuRef.current = slashMenu;
+  slashSelectionRef.current = slashSelection;
+
+  const slashMatches = slashMenu
+    ? findContentBlocks(contentBlocks, slashMenu.query)
+    : [];
+
+  useEffect(() => {
+    const selected = slashListRef.current?.querySelector<HTMLElement>(
+      `[data-slash-index="${slashSelection}"]`,
+    );
+    selected?.scrollIntoView({ block: "nearest" });
+  }, [slashSelection]);
 
   useImperativeHandle(ref, () => ({
     scrollToRatio(ratio: number) {
@@ -69,6 +103,24 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
       });
       view.focus();
     },
+    getSelectedText() {
+      const view = viewRef.current;
+      if (!view) return "";
+      const selection = view.state.selection.main;
+      return view.state.doc.sliceString(selection.from, selection.to);
+    },
+    insertText(text: string) {
+      const view = viewRef.current;
+      if (!view || !text) return;
+      const selection = view.state.selection.main;
+      const anchor = selection.from + text.length;
+      view.dispatch({
+        changes: { from: selection.from, to: selection.to, insert: text },
+        selection: { anchor },
+        effects: EditorView.scrollIntoView(anchor, { y: "center" }),
+      });
+      view.focus();
+    },
     openSearch() {
       const view = viewRef.current;
       if (!view) return;
@@ -82,6 +134,52 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
   useEffect(() => {
     if (!host.current) return;
     // CodeMirror 实例只创建一次，回调通过 ref 获取最新值，避免每次输入都重建编辑器。
+    const closeSlashMenu = () => {
+      slashMenuRef.current = null;
+      setSlashMenu(null);
+      slashSelectionRef.current = 0;
+      setSlashSelection(0);
+    };
+    const refreshSlashMenu = (view: EditorView) => {
+      const menu = detectSlashMenu(view, host.current);
+      if (!menu) {
+        closeSlashMenu();
+        return;
+      }
+      slashMenuRef.current = menu;
+      setSlashMenu(menu);
+      slashSelectionRef.current = 0;
+      setSlashSelection(0);
+    };
+    const insertSlashBlock = (view: EditorView, block: ContentBlock) => {
+      const menu = slashMenuRef.current;
+      if (!menu) return;
+      applySlashBlock(view, menu, block.content);
+      closeSlashMenu();
+    };
+    const handleSlashKey = (
+      view: EditorView,
+      action: "next" | "previous" | "insert" | "close",
+    ): boolean => {
+      const menu = slashMenuRef.current;
+      if (!menu) return false;
+      if (action === "close") {
+        closeSlashMenu();
+        return true;
+      }
+      const matches = findContentBlocks(contentBlocksRef.current, menu.query);
+      if (matches.length === 0) return true;
+      if (action === "next" || action === "previous") {
+        const direction = action === "next" ? 1 : -1;
+        const next = (slashSelectionRef.current + direction + matches.length) % matches.length;
+        slashSelectionRef.current = next;
+        setSlashSelection(next);
+        return true;
+      }
+      insertSlashBlock(view, matches[slashSelectionRef.current] ?? matches[0]);
+      return true;
+    };
+
     const importImages = async (
       view: EditorView,
       images: ArticleImageInput[],
@@ -104,15 +202,23 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
         anchor: Math.min(Math.max(0, initialCursorPosition ?? 0), value.length),
       },
       extensions: [
+        // basicSetup 的光标移动和换行命令也会处理这些按键；最高优先级确保斜杠菜单先消费它们。
+        Prec.highest(keymap.of([
+          { key: "ArrowDown", run: (view) => handleSlashKey(view, "next") },
+          { key: "ArrowUp", run: (view) => handleSlashKey(view, "previous") },
+          { key: "Enter", run: (view) => handleSlashKey(view, "insert") },
+          { key: "Tab", run: (view) => handleSlashKey(view, "insert") },
+          { key: "Escape", run: (view) => handleSlashKey(view, "close") },
+        ])),
         basicSetup,
         markdown({ base: markdownLanguage, codeLanguages: languages }),
-        keymap.of([]),
         EditorView.lineWrapping,
         appearance.of(editorAppearance(dark)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString());
           if (update.docChanged || update.selectionSet) {
             onCursorPositionRef.current?.(update.state.selection.main.head);
+            refreshSlashMenu(update.view);
           }
         }),
         EditorView.domEventHandlers({
@@ -156,6 +262,9 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
             return true;
           },
           scroll: (_event, view) => {
+            if (slashMenuRef.current) {
+              window.requestAnimationFrame(() => refreshSlashMenu(view));
+            }
             if (suppressScroll.current) return;
             const maximum = Math.max(1, view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight);
             onScrollRef.current?.(view.scrollDOM.scrollTop / maximum);
@@ -217,8 +326,134 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
   }, [value]);
 
-  return <div ref={host} className="h-full min-w-0 overflow-hidden" />;
+  const chooseSlashBlock = (block: ContentBlock) => {
+    const view = viewRef.current;
+    const menu = slashMenuRef.current;
+    if (!view || !menu) return;
+    applySlashBlock(view, menu, block.content);
+    slashMenuRef.current = null;
+    setSlashMenu(null);
+    slashSelectionRef.current = 0;
+    setSlashSelection(0);
+  };
+
+  return (
+    <div className="relative h-full min-w-0 overflow-hidden">
+      <div ref={host} className="h-full min-w-0 overflow-hidden" />
+      {slashMenu && (
+        <div
+          className="absolute z-40 w-72 overflow-hidden rounded-xl border border-stone-200 bg-white p-1.5 shadow-[0_12px_36px_rgba(28,25,23,0.18)] dark:border-stone-700 dark:bg-[#292a27]"
+          style={{ left: slashMenu.left, top: slashMenu.top }}
+        >
+          <div className="flex items-center gap-1.5 px-2 pb-1.5 pt-1 text-[10px] font-medium text-stone-400">
+            <Blocks size={12} />
+            <span>{slashMenu.query ? `搜索“${slashMenu.query}”` : "插入内容块"}</span>
+            <span className="ml-auto">↑↓ 选择 · Enter 插入</span>
+          </div>
+          {slashMatches.length === 0 ? (
+            <div className="rounded-lg px-2 py-4 text-center text-xs text-stone-400">
+              {contentBlocks.length === 0 ? "还没有内容块，请先在侧栏创建" : "没有匹配的内容块"}
+            </div>
+          ) : (
+            <div ref={slashListRef} className="max-h-64 overflow-y-auto">
+              {slashMatches.map((block, index) => (
+                <button
+                  key={block.id}
+                  data-slash-index={index}
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseSlashBlock(block)}
+                  className={`flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition ${
+                    index === slashSelection
+                      ? "bg-stone-100 dark:bg-stone-700"
+                      : "hover:bg-stone-50 dark:hover:bg-stone-800"
+                  }`}
+                >
+                  <Blocks size={14} className="mt-0.5 shrink-0 text-stone-400" />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-stone-700 dark:text-stone-200">{block.title}</span>
+                      <span className="max-w-28 truncate font-mono text-[9px] text-stone-400">/{block.command}</span>
+                    </span>
+                    <span className="mt-0.5 block truncate font-mono text-[10px] text-stone-400">{block.content}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 });
+
+function detectSlashMenu(view: EditorView, host: HTMLDivElement | null): SlashMenuState | null {
+  if (!host) return null;
+  const selection = view.state.selection.main;
+  if (!selection.empty) return null;
+  const line = view.state.doc.lineAt(selection.head);
+  const beforeCursor = view.state.doc.sliceString(line.from, selection.head);
+  const match = beforeCursor.match(/(?:^|\s)\/([^/]*)$/u);
+  if (!match || match.index === undefined) return null;
+  const slashOffset = match.index + match[0].lastIndexOf("/");
+  const coordinates = view.coordsAtPos(selection.head);
+  if (!coordinates) return null;
+  const bounds = host.getBoundingClientRect();
+  const menuWidth = 288;
+  const menuHeight = 280;
+  const left = Math.min(
+    Math.max(8, coordinates.left - bounds.left),
+    Math.max(8, bounds.width - menuWidth - 8),
+  );
+  const below = coordinates.bottom - bounds.top + 6;
+  const top = below + menuHeight <= bounds.height
+    ? below
+    : Math.max(8, coordinates.top - bounds.top - menuHeight - 6);
+  return {
+    from: line.from + slashOffset,
+    to: selection.head,
+    query: match[1],
+    left,
+    top,
+  };
+}
+
+function findContentBlocks(blocks: ContentBlock[], rawQuery: string): ContentBlock[] {
+  const query = rawQuery.trim().toLocaleLowerCase();
+  if (!query) return blocks.slice(0, 8);
+  return blocks
+    .map((block, index) => {
+      const command = block.command.toLocaleLowerCase();
+      const title = block.title.toLocaleLowerCase();
+      const content = block.content.toLocaleLowerCase();
+      const score = command === query
+        ? 0
+        : command.startsWith(query)
+          ? 1
+          : command.includes(query)
+            ? 2
+            : title.includes(query)
+              ? 3
+              : content.includes(query)
+                ? 4
+                : Number.POSITIVE_INFINITY;
+      return { block, index, score };
+    })
+    .filter((item) => Number.isFinite(item.score))
+    .sort((left, right) => left.score - right.score || left.index - right.index)
+    .map((item) => item.block)
+    .slice(0, 8);
+}
+
+function applySlashBlock(view: EditorView, menu: SlashMenuState, content: string) {
+  const anchor = menu.from + content.length;
+  view.dispatch({
+    changes: { from: menu.from, to: menu.to, insert: content },
+    selection: { anchor },
+    effects: EditorView.scrollIntoView(anchor, { y: "center" }),
+  });
+  view.focus();
+}
 
 function editorAppearance(dark: boolean) {
   return [

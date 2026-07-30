@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:build:microsoft-store": "tauri build --no-bundle && tauri bundle --config src-tauri/tauri.microsoftstore.conf.json --bundles nsis"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

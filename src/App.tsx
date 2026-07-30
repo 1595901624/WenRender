@@ -6,10 +6,14 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Palette, PanelLeftClose, PanelLeftOpen, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
+import { ArrowLeft, Blocks, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Palette, PanelLeftClose, PanelLeftOpen, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
+import {
+  ContentBlockSidebar,
+  type ContentBlockDraft,
+} from "./components/ContentBlockSidebar";
 import { OutlineSidebar } from "./components/OutlineSidebar";
 import {
   WorkspaceSearchSidebar,
@@ -22,6 +26,11 @@ import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
 import { hasUnsavedChanges, needsSaveAttention } from "./lib/document";
 import { activeHeadingAt, calculateArticleStats, extractMarkdownHeadings } from "./lib/articleTools";
+import {
+  createContentBlock,
+  loadContentBlocks,
+  saveContentBlocks,
+} from "./lib/contentBlocks";
 import { parseImageSettings, type ImageSettings } from "./lib/imageSettings";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
@@ -117,10 +126,11 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(
     () => window.localStorage.getItem("wenrender-sidebar-open") !== "false",
   );
-  const [sidebarMode, setSidebarMode] = useState<"files" | "outline" | "search">(() => {
+  const [sidebarMode, setSidebarMode] = useState<"files" | "outline" | "search" | "blocks">(() => {
     const saved = window.localStorage.getItem("wenrender-sidebar-mode");
-    return saved === "outline" || saved === "search" ? saved : "files";
+    return saved === "outline" || saved === "search" || saved === "blocks" ? saved : "files";
   });
+  const [contentBlocks, setContentBlocks] = useState(loadContentBlocks);
   const [focusMode, setFocusMode] = useState(false);
   const [viewMode, setViewMode] = useState<"split" | "editor" | "preview">("split");
   const [previewMode, setPreviewMode] = useState<PreviewMode>(() => (
@@ -364,6 +374,56 @@ function App() {
     setNotice({ message, tone });
     window.setTimeout(() => setNotice(null), 2200);
   }, []);
+
+  const saveContentBlock = useCallback((draft: ContentBlockDraft) => {
+    const existing = draft.id ? contentBlocks.find((item) => item.id === draft.id) : undefined;
+    const nextBlock = existing
+      ? {
+          ...existing,
+          title: draft.title,
+          command: draft.command,
+          content: draft.content,
+          updatedAt: Date.now(),
+        }
+      : createContentBlock(draft.title, draft.command, draft.content);
+    const next = [
+      nextBlock,
+      ...contentBlocks.filter((item) => item.id !== nextBlock.id),
+    ];
+    if (!saveContentBlocks(next)) {
+      notify("内容块保存失败：本地存储空间不足", "error");
+      return;
+    }
+    setContentBlocks(next);
+    notify(existing ? "内容块已更新" : "内容块已保存", "success");
+  }, [contentBlocks, notify]);
+
+  const deleteContentBlock = useCallback((id: string) => {
+    const next = contentBlocks.filter((item) => item.id !== id);
+    if (!saveContentBlocks(next)) {
+      notify("内容块删除失败", "error");
+      return;
+    }
+    setContentBlocks(next);
+    notify("内容块已删除", "neutral");
+  }, [contentBlocks, notify]);
+
+  const readEditorSelection = useCallback((): string | null => {
+    const selected = editorRef.current?.getSelectedText() ?? "";
+    if (!selected.trim()) {
+      notify("请先在编辑器中选择要保存的内容", "neutral");
+      return null;
+    }
+    return selected;
+  }, [notify]);
+
+  const insertContentBlock = useCallback((content: string) => {
+    if (viewMode === "preview") setViewMode("split");
+    setActivePage("workspace");
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => editorRef.current?.insertText(content));
+    });
+  }, [viewMode]);
 
   const updateActive = useCallback((content: string) => {
     setDocuments((items) => items.map((item) => item.id === activeId ? { ...item, content } : item));
@@ -945,6 +1005,13 @@ function App() {
         setFocusMode((value) => !value);
         setActivePage("workspace");
       }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSidebarOpen(true);
+        setSidebarMode("blocks");
+        setFocusMode(false);
+        setActivePage("workspace");
+      }
       if (event.key === "Escape" && focusMode) {
         setFocusMode(false);
       }
@@ -1001,6 +1068,7 @@ function App() {
             onSelect={(heading) => jumpToHeading(heading.from)}
             onShowFiles={() => setSidebarMode("files")}
             onShowSearch={() => setSidebarMode("search")}
+            onShowBlocks={() => setSidebarMode("blocks")}
           />
         )}
         {sidebarOpen && !focusMode && sidebarMode === "search" && (
@@ -1010,6 +1078,20 @@ function App() {
             onOpenResult={openWorkspaceSearchResult}
             onShowFiles={() => setSidebarMode("files")}
             onShowOutline={() => setSidebarMode("outline")}
+            onShowBlocks={() => setSidebarMode("blocks")}
+          />
+        )}
+        {sidebarOpen && !focusMode && sidebarMode === "blocks" && (
+          <ContentBlockSidebar
+            blocks={contentBlocks}
+            canCaptureSelection={effectiveViewMode !== "preview"}
+            onReadSelection={readEditorSelection}
+            onSave={saveContentBlock}
+            onDelete={deleteContentBlock}
+            onInsert={insertContentBlock}
+            onShowFiles={() => setSidebarMode("files")}
+            onShowOutline={() => setSidebarMode("outline")}
+            onShowSearch={() => setSidebarMode("search")}
           />
         )}
         <div className={clsx("m-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-black/10 bg-white shadow-sm dark:border-white/10 dark:bg-[#20211f]", sidebarOpen && !focusMode && "ml-0")}>
@@ -1195,6 +1277,17 @@ function App() {
               {typographyCustomCount > 0 && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
             </button>
             <ToolbarButton
+              label="可复用内容块（Ctrl+Shift+K）"
+              onClick={() => {
+                setSidebarOpen(true);
+                setSidebarMode("blocks");
+                setFocusMode(false);
+                setActivePage("workspace");
+              }}
+            >
+              <Blocks size={17} />
+            </ToolbarButton>
+            <ToolbarButton
               label={focusMode ? "退出专注模式（Ctrl+Shift+M）" : "专注模式（Ctrl+Shift+M）"}
               onClick={() => {
                 setFocusMode((value) => !value);
@@ -1277,6 +1370,7 @@ function App() {
                     onImportImages={importArticleImages}
                     initialCursorPosition={active.cursorPosition}
                     onCursorPositionChange={updateActiveCursor}
+                    contentBlocks={contentBlocks}
                     onScrollRatio={(ratio) => { if (syncScroll) previewRef.current?.scrollToRatio(ratio); }}
                   />
                 </div>
