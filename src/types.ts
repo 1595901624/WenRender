@@ -34,6 +34,8 @@ export type OpenDocument = {
   readOnly: boolean;
   externalState: "normal" | "modified" | "deleted";
   recoveredDraft?: boolean;
+  // 当前光标位置会随工作区保存，用于重新打开文章时恢复编辑位置。
+  cursorPosition?: number;
   // 存在该字段时，文件归属于某个已打开的目录树；否则显示在独立文件区域。
   directoryId?: string;
 };

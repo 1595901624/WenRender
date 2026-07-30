@@ -13,6 +13,7 @@ export type PersistedDocument = {
   baseHash?: string;
   scratchContent?: string;
   scratchSavedContent?: string;
+  cursorPosition?: number;
 };
 
 export type WorkspaceSession = {
@@ -64,6 +65,7 @@ export function saveWorkspaceSession(
         directoryPath,
         draftContent: needsSaveAttention(document) ? document.content : undefined,
         baseHash: needsSaveAttention(document) ? document.diskFingerprint?.hash : undefined,
+        cursorPosition: document.cursorPosition,
       };
     }
 
@@ -72,6 +74,7 @@ export function saveWorkspaceSession(
       name: document.name,
       scratchContent: document.content,
       scratchSavedContent: document.savedContent,
+      cursorPosition: document.cursorPosition,
     };
   });
 

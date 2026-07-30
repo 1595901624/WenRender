@@ -39,6 +39,7 @@ export async function restoreWorkspaceSession(session: WorkspaceSession): Promis
         id, path: null, name: persisted.name, content, savedContent,
         lineEnding: "lf", hasBom: false, readOnly: false, externalState: "normal",
         recoveredDraft: hasUnsavedChanges({ content, savedContent }),
+        cursorPosition: persisted.cursorPosition,
       });
       if (index === session.activeIndex) restoredActiveId = id;
       continue;
@@ -58,6 +59,7 @@ export async function restoreWorkspaceSession(session: WorkspaceSession): Promis
         diskFingerprint: diskChangedWhileClosed ? { ...snapshot.fingerprint, hash: persisted.baseHash! } : snapshot.fingerprint,
         externalState: diskChangedWhileClosed ? "modified" : "normal",
         recoveredDraft: restoredDraft !== undefined,
+        cursorPosition: persisted.cursorPosition,
         directoryId: directory?.id,
       });
     } catch {
@@ -67,6 +69,7 @@ export async function restoreWorkspaceSession(session: WorkspaceSession): Promis
         id, path: persisted.path, name: fileName(persisted.path), content: persisted.draftContent,
         savedContent: "", diskFingerprint: persisted.baseHash ? { size: 0, modifiedMs: 0, hash: persisted.baseHash } : undefined,
         lineEnding: "lf", hasBom: false, readOnly: false, externalState: "deleted", recoveredDraft: true,
+        cursorPosition: persisted.cursorPosition,
         directoryId: directory?.id,
       });
     }

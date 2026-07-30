@@ -9,11 +9,13 @@ import {
   File,
   FileCode2,
   FileText,
+  ListTree,
   Folder,
   FolderOpen,
   FilePlus2,
   PanelTopOpen,
   Plus,
+  Search,
   X,
 } from "lucide-react";
 import clsx from "clsx";
@@ -33,6 +35,8 @@ type Props = {
   onNewInDirectory: (directoryId: string, directoryPath: string, directoryName: string) => void;
   onOpenFiles: () => void;
   onOpenFolder: () => void;
+  onShowOutline: () => void;
+  onShowSearch: () => void;
 };
 
 export function FileSidebar({
@@ -48,6 +52,8 @@ export function FileSidebar({
   onNewInDirectory,
   onOpenFiles,
   onOpenFolder,
+  onShowOutline,
+  onShowSearch,
 }: Props) {
   const [showAllFiles, setShowAllFiles] = useState(() => window.localStorage.getItem("wenrender-show-all-files") === "true");
   const [expanded, setExpanded] = useState<Set<string>>(() => {
@@ -101,6 +107,24 @@ export function FileSidebar({
           <button
             type="button"
             className="icon-button"
+            onClick={onShowSearch}
+            title="工作区全文搜索"
+            aria-label="工作区全文搜索"
+          >
+            <Search size={16} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={onShowOutline}
+            title="显示文章大纲"
+            aria-label="显示文章大纲"
+          >
+            <ListTree size={16} />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
             onClick={onNew}
             title="新建草稿"
             aria-label="新建草稿"
@@ -116,7 +140,7 @@ export function FileSidebar({
                 title="打开文件或目录"
               >
                 <FolderOpen size={15} />
-                <span>打开</span>
+                {/* <span>打开</span> */}
                 <ChevronDown size={12} className="text-stone-400" />
               </button>
             </DropdownMenu.Trigger>

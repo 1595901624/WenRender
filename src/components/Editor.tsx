@@ -6,6 +6,7 @@ import { defaultHighlightStyle, HighlightStyle, syntaxHighlighting } from "@code
 import { languages } from "@codemirror/language-data";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { tags } from "@lezer/highlight";
+import { openSearchPanel } from "@codemirror/search";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { ArticleImageInput } from "../types";
 
@@ -15,10 +16,15 @@ type Props = {
   onChange: (value: string) => void;
   onScrollRatio?: (ratio: number) => void;
   onImportImages?: (images: ArticleImageInput[]) => Promise<string[]>;
+  initialCursorPosition?: number;
+  onCursorPositionChange?: (position: number) => void;
 };
 
 export type EditorHandle = {
   scrollToRatio: (ratio: number) => void;
+  scrollToPosition: (position: number) => void;
+  openSearch: () => void;
+  focus: () => void;
 };
 
 export const Editor = forwardRef<EditorHandle, Props>(function Editor({
@@ -27,6 +33,8 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
   onChange,
   onScrollRatio,
   onImportImages,
+  initialCursorPosition,
+  onCursorPositionChange,
 }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView>();
@@ -36,9 +44,11 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
   const onChangeRef = useRef(onChange);
   const onScrollRef = useRef(onScrollRatio);
   const onImportImagesRef = useRef(onImportImages);
+  const onCursorPositionRef = useRef(onCursorPositionChange);
   onChangeRef.current = onChange;
   onScrollRef.current = onScrollRatio;
   onImportImagesRef.current = onImportImages;
+  onCursorPositionRef.current = onCursorPositionChange;
 
   useImperativeHandle(ref, () => ({
     scrollToRatio(ratio: number) {
@@ -48,6 +58,24 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
       suppressScroll.current = true;
       view.scrollDOM.scrollTop = maximum * ratio;
       window.requestAnimationFrame(() => { suppressScroll.current = false; });
+    },
+    scrollToPosition(position: number) {
+      const view = viewRef.current;
+      if (!view) return;
+      const anchor = Math.min(Math.max(0, position), view.state.doc.length);
+      view.dispatch({
+        selection: { anchor },
+        effects: EditorView.scrollIntoView(anchor, { y: "start", yMargin: 56 }),
+      });
+      view.focus();
+    },
+    openSearch() {
+      const view = viewRef.current;
+      if (!view) return;
+      openSearchPanel(view);
+    },
+    focus() {
+      viewRef.current?.focus();
     },
   }), []);
 
@@ -72,6 +100,9 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
 
     const state = EditorState.create({
       doc: value,
+      selection: {
+        anchor: Math.min(Math.max(0, initialCursorPosition ?? 0), value.length),
+      },
       extensions: [
         basicSetup,
         markdown({ base: markdownLanguage, codeLanguages: languages }),
@@ -80,6 +111,9 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
         appearance.of(editorAppearance(dark)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString());
+          if (update.docChanged || update.selectionSet) {
+            onCursorPositionRef.current?.(update.state.selection.main.head);
+          }
         }),
         EditorView.domEventHandlers({
           paste: (event, view) => {
@@ -131,6 +165,13 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor({
     });
     const view = new EditorView({ state, parent: host.current });
     viewRef.current = view;
+    if ((initialCursorPosition ?? 0) > 0) {
+      window.requestAnimationFrame(() => {
+        if (viewRef.current !== view) return;
+        const anchor = view.state.selection.main.head;
+        view.dispatch({ effects: EditorView.scrollIntoView(anchor, { y: "center" }) });
+      });
+    }
     let unlistenNativeDrop: (() => void) | undefined;
     if ("__TAURI_INTERNALS__" in window) {
       void getCurrentWebview().onDragDropEvent((event) => {

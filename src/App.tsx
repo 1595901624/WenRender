@@ -5,16 +5,22 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, FolderOpen, Link2, Menu, Monitor, Palette, PanelLeftClose, PanelLeftOpen, Save, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
+import { ArrowLeft, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Palette, PanelLeftClose, PanelLeftOpen, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
+import { OutlineSidebar } from "./components/OutlineSidebar";
+import {
+  WorkspaceSearchSidebar,
+  type WorkspaceSearchTarget,
+} from "./components/WorkspaceSearchSidebar";
 import { Preview, type PreviewHandle, type PreviewMode } from "./components/Preview";
 import { TypographyPanel } from "./components/TypographyPanel";
 import { TitleBar } from "./components/TitleBar";
 import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
 import { hasUnsavedChanges, needsSaveAttention } from "./lib/document";
+import { activeHeadingAt, calculateArticleStats, extractMarkdownHeadings } from "./lib/articleTools";
 import { parseImageSettings, type ImageSettings } from "./lib/imageSettings";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
@@ -110,6 +116,11 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(
     () => window.localStorage.getItem("wenrender-sidebar-open") !== "false",
   );
+  const [sidebarMode, setSidebarMode] = useState<"files" | "outline" | "search">(() => {
+    const saved = window.localStorage.getItem("wenrender-sidebar-mode");
+    return saved === "outline" || saved === "search" ? saved : "files";
+  });
+  const [focusMode, setFocusMode] = useState(false);
   const [viewMode, setViewMode] = useState<"split" | "editor" | "preview">("split");
   const [previewMode, setPreviewMode] = useState<PreviewMode>(() => (
     window.localStorage.getItem("wenrender-preview-mode") === "phone" ? "phone" : "web"
@@ -281,6 +292,10 @@ function App() {
   }, [sidebarOpen]);
 
   useEffect(() => {
+    window.localStorage.setItem("wenrender-sidebar-mode", sidebarMode);
+  }, [sidebarMode]);
+
+  useEffect(() => {
     window.localStorage.setItem("wenrender-preview-mode", previewMode);
   }, [previewMode]);
 
@@ -303,6 +318,16 @@ function App() {
   }, [colorScheme]);
 
   const active = documents.find((document) => document.id === activeId) ?? documents[0];
+  const headings = useMemo(() => extractMarkdownHeadings(active.content), [active.content]);
+  const articleStats = useMemo(
+    () => calculateArticleStats(active.content, headings.length),
+    [active.content, headings.length],
+  );
+  const activeHeading = useMemo(
+    () => activeHeadingAt(headings, active.cursorPosition ?? 0),
+    [active.cursorPosition, headings],
+  );
+  const effectiveViewMode = focusMode ? "editor" : viewMode;
   const baseTheme = articleThemes.find((item) => item.id === themeId) ?? defaultTheme;
   const codeTheme = codeThemes.find((item) => item.id === codeThemeId) ?? defaultCodeTheme;
   const typographyOverrides = typographyOverridesByTheme[baseTheme.id] ?? {};
@@ -340,6 +365,21 @@ function App() {
   const updateActive = useCallback((content: string) => {
     setDocuments((items) => items.map((item) => item.id === activeId ? { ...item, content } : item));
   }, [activeId]);
+
+  const updateActiveCursor = useCallback((cursorPosition: number) => {
+    setDocuments((items) => items.map((item) => (
+      item.id === activeId && item.cursorPosition !== cursorPosition
+        ? { ...item, cursorPosition }
+        : item
+    )));
+  }, [activeId]);
+
+  const jumpToHeading = useCallback((position: number) => {
+    if (viewMode === "preview") setViewMode("split");
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => editorRef.current?.scrollToPosition(position));
+    });
+  }, [viewMode]);
 
   const importArticleImages = useCallback(async (images: ArticleImageInput[]): Promise<string[]> => {
     if (!active.path || active.externalState === "deleted") {
@@ -526,11 +566,25 @@ function App() {
     }
   };
 
-  const openTreeDocument = async (node: DirectoryNode, directoryId: string) => {
+  const openTreeDocument = async (
+    node: DirectoryNode,
+    directoryId: string,
+    cursorPosition?: number,
+  ) => {
     if (!node.isMarkdown) return;
     const existing = documents.find((item) => item.path === node.path);
     if (existing) {
+      if (cursorPosition !== undefined) {
+        setDocuments((items) => items.map((item) => (
+          item.id === existing.id ? { ...item, cursorPosition } : item
+        )));
+      }
       setActiveId(existing.id);
+      if (cursorPosition !== undefined) {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => editorRef.current?.scrollToPosition(cursorPosition));
+        });
+      }
       return;
     }
     try {
@@ -539,10 +593,34 @@ function App() {
       setDocuments((items) => [...items, {
         ...createWorkspaceDocument(id, node.path, node.name, snapshot),
         directoryId,
+        cursorPosition,
       }]);
       setActiveId(id);
+      if (cursorPosition !== undefined) {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => editorRef.current?.scrollToPosition(cursorPosition));
+        });
+      }
     } catch (error) {
       notify(`打开失败：${String(error)}`, "error");
+    }
+  };
+
+  const openWorkspaceSearchResult = (target: WorkspaceSearchTarget) => {
+    setActivePage("workspace");
+    if (viewMode === "preview") setViewMode("split");
+    if (target.documentId) {
+      setDocuments((items) => items.map((item) => (
+        item.id === target.documentId ? { ...item, cursorPosition: target.position } : item
+      )));
+      setActiveId(target.documentId);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => editorRef.current?.scrollToPosition(target.position));
+      });
+      return;
+    }
+    if (target.node && target.directoryId) {
+      void openTreeDocument(target.node, target.directoryId, target.position);
     }
   };
 
@@ -794,17 +872,32 @@ function App() {
         event.preventDefault();
         setSidebarOpen((value) => !value);
       }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setSidebarOpen(true);
+        setSidebarMode("search");
+        setFocusMode(false);
+        setActivePage("workspace");
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "m") {
+        event.preventDefault();
+        setFocusMode((value) => !value);
+        setActivePage("workspace");
+      }
+      if (event.key === "Escape" && focusMode) {
+        setFocusMode(false);
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [active]);
+  }, [active, focusMode]);
 
   return (
     <Tooltip.Provider delayDuration={350}>
       <div className="flex h-screen min-w-[900px] flex-col overflow-hidden bg-[#f3f3f1] text-ink dark:bg-[#171815] dark:text-stone-100">
         <TitleBar />
         <div className="flex min-h-0 flex-1 overflow-hidden">
-        {sidebarOpen && (
+        {sidebarOpen && !focusMode && sidebarMode === "files" && (
           <FileSidebar
             documents={documents}
             directories={directories}
@@ -835,9 +928,30 @@ function App() {
               setActivePage("workspace");
               void openDirectory();
             }}
+            onShowOutline={() => setSidebarMode("outline")}
+            onShowSearch={() => setSidebarMode("search")}
           />
         )}
-        <div className={clsx("m-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-black/10 bg-white shadow-sm dark:border-white/10 dark:bg-[#20211f]", sidebarOpen && "ml-0")}>
+        {sidebarOpen && !focusMode && sidebarMode === "outline" && (
+          <OutlineSidebar
+            documentName={active.name}
+            headings={headings}
+            activeHeadingId={activeHeading?.id ?? null}
+            onSelect={(heading) => jumpToHeading(heading.from)}
+            onShowFiles={() => setSidebarMode("files")}
+            onShowSearch={() => setSidebarMode("search")}
+          />
+        )}
+        {sidebarOpen && !focusMode && sidebarMode === "search" && (
+          <WorkspaceSearchSidebar
+            documents={documents}
+            directories={directories}
+            onOpenResult={openWorkspaceSearchResult}
+            onShowFiles={() => setSidebarMode("files")}
+            onShowOutline={() => setSidebarMode("outline")}
+          />
+        )}
+        <div className={clsx("m-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-black/10 bg-white shadow-sm dark:border-white/10 dark:bg-[#20211f]", sidebarOpen && !focusMode && "ml-0")}>
         <header className="flex h-14 shrink-0 items-center border-b border-stone-200 bg-white px-3 dark:border-stone-700 dark:bg-[#20211f]">
           {activePage === "settings" ? (
             <>
@@ -1019,13 +1133,22 @@ function App() {
               <span>排版</span>
               {typographyCustomCount > 0 && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
             </button>
+            <ToolbarButton
+              label={focusMode ? "退出专注模式（Ctrl+Shift+M）" : "专注模式（Ctrl+Shift+M）"}
+              onClick={() => {
+                setFocusMode((value) => !value);
+                setActivePage("workspace");
+              }}
+            >
+              {focusMode ? <Minimize2 size={17} /> : <Focus size={17} />}
+            </ToolbarButton>
             <div className="flex rounded-lg bg-stone-100 p-0.5 dark:bg-stone-800">
               {([
                 ["editor", Code2, "仅编辑"],
                 ["split", SplitSquareHorizontal, "分栏"],
                 ["preview", Eye, "仅预览"],
               ] as const).map(([mode, Icon, label]) => (
-                <button key={mode} title={label} onClick={() => setViewMode(mode)} className={clsx("rounded-md p-1.5 transition", viewMode === mode ? "bg-white text-[#20211f] shadow-sm dark:bg-stone-700 dark:text-stone-100" : "text-stone-400 hover:text-stone-600 dark:hover:text-stone-200")}>
+                <button key={mode} title={label} onClick={() => { setFocusMode(false); setViewMode(mode); }} className={clsx("rounded-md p-1.5 transition", effectiveViewMode === mode ? "bg-white text-[#20211f] shadow-sm dark:bg-stone-700 dark:text-stone-100" : "text-stone-400 hover:text-stone-600 dark:hover:text-stone-200")}>
                   <Icon size={16} />
                 </button>
               ))}
@@ -1062,10 +1185,26 @@ function App() {
         ) : (
         <main className="relative flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1">
-            {viewMode !== "preview" && (
-              <section className={clsx("min-w-0", viewMode === "split" ? "w-1/2 border-r border-stone-200 dark:border-stone-700" : "w-full")}>
+            {effectiveViewMode !== "preview" && (
+              <section className={clsx("min-w-0", effectiveViewMode === "split" ? "w-1/2 border-r border-stone-200 dark:border-stone-700" : "w-full")}>
                 <div className="flex h-10 items-center justify-between border-b border-stone-100 bg-[#fbfcfb] px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400 dark:border-stone-700 dark:bg-[#1f201e]">
-                  <span>Markdown</span><span>{active.content.length} 字符</span>
+                  <span>Markdown</span>
+                  <div className="flex items-center gap-3 normal-case tracking-normal">
+                    <span
+                      title={`${articleStats.characters} 字符 · ${articleStats.words} 字词 · ${articleStats.paragraphs} 段 · ${articleStats.headings} 个标题 · ${articleStats.images} 张图片`}
+                    >
+                      {articleStats.words} 字词 · 约 {articleStats.readingMinutes} 分钟
+                    </span>
+                    <button
+                      type="button"
+                      className="rounded p-1 text-stone-400 transition hover:bg-stone-200 hover:text-stone-700 dark:hover:bg-stone-700 dark:hover:text-stone-200"
+                      title="查找与替换（Ctrl+F）"
+                      aria-label="查找与替换"
+                      onClick={() => editorRef.current?.openSearch()}
+                    >
+                      <Search size={13} />
+                    </button>
+                  </div>
                 </div>
                 <div className="h-[calc(100%-40px)]">
                   <Editor
@@ -1075,13 +1214,15 @@ function App() {
                     dark={darkInterface}
                     onChange={updateActive}
                     onImportImages={importArticleImages}
+                    initialCursorPosition={active.cursorPosition}
+                    onCursorPositionChange={updateActiveCursor}
                     onScrollRatio={(ratio) => { if (syncScroll) previewRef.current?.scrollToRatio(ratio); }}
                   />
                 </div>
               </section>
             )}
-            {viewMode !== "editor" && (
-              <section className={clsx("min-w-0", viewMode === "split" ? "w-1/2" : "w-full")}>
+            {effectiveViewMode !== "editor" && (
+              <section className={clsx("min-w-0", effectiveViewMode === "split" ? "w-1/2" : "w-full")}>
                 <div className="flex h-10 items-center justify-between border-b border-stone-200 bg-[#f8f9f6] px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400 dark:border-stone-700 dark:bg-[#1d1e1b]">
                   <span>预览</span>
                   <div className="flex rounded-lg bg-stone-200/70 p-0.5 normal-case tracking-normal dark:bg-stone-800">
