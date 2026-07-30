@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -148,9 +149,11 @@ function App() {
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
   const [newMarkdownRequest, setNewMarkdownRequest] = useState<NewMarkdownRequest | null>(null);
+  const [pendingSystemOpenPaths, setPendingSystemOpenPaths] = useState<string[]>([]);
   const editorRef = useRef<EditorHandle>(null);
   const previewRef = useRef<PreviewHandle>(null);
   const documentsRef = useRef(documents);
+  const systemOpenChain = useRef(Promise.resolve());
   const allowWindowClose = useRef(false);
   documentsRef.current = documents;
 
@@ -521,27 +524,85 @@ function App() {
     }
   };
 
-  const openDocument = async () => {
+  const openMarkdownPaths = useCallback(async (paths: string[], promoteToStandalone = false) => {
     try {
-      const selected = await open({ multiple: true, filters: [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "txt"] }] });
-      if (!selected) return;
-      for (const path of selected) {
-        const existing = documents.find((item) => item.path === path);
+      let currentDocuments = documentsRef.current;
+      for (const path of paths) {
+        const existing = currentDocuments.find((item) => item.path === path);
         if (existing) {
-          // 用户显式打开目录树中的文件时，将它提升为侧边栏“文件”区域的独立条目。
-          setDocuments((items) => items.map((item) => item.id === existing.id ? { ...item, directoryId: undefined } : item));
+          if (promoteToStandalone && existing.directoryId) {
+            // 用户从系统或文件选择器显式打开时，将文章提升为侧边栏“文件”区域的独立条目。
+            currentDocuments = currentDocuments.map((item) => (
+              item.id === existing.id ? { ...item, directoryId: undefined } : item
+            ));
+            documentsRef.current = currentDocuments;
+            setDocuments(currentDocuments);
+          }
           setActiveId(existing.id);
           continue;
         }
         const snapshot = await invoke<FileSnapshot>("read_file_snapshot", { filePath: path });
         const id = createId();
-        setDocuments((items) => [...items, createWorkspaceDocument(id, path, fileName(path), snapshot)]);
+        currentDocuments = [
+          ...currentDocuments,
+          createWorkspaceDocument(id, path, fileName(path), snapshot),
+        ];
+        documentsRef.current = currentDocuments;
+        setDocuments(currentDocuments);
         setActiveId(id);
       }
+      if (paths.length > 0) setActivePage("workspace");
+    } catch (error) {
+      notify(`打开失败：${String(error)}`, "error");
+    }
+  }, [notify]);
+
+  const openDocument = async () => {
+    try {
+      const selected = await open({
+        multiple: true,
+        filters: [{ name: "Markdown", extensions: ["md", "markdown", "mdown", "mkd", "txt"] }],
+      });
+      if (!selected) return;
+      await openMarkdownPaths(selected, true);
     } catch (error) {
       notify(`打开失败：${String(error)}`, "error");
     }
   };
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const collectPendingPaths = async () => {
+      const paths = await invoke<string[]>("take_pending_open_files");
+      if (disposed || paths.length === 0) return;
+      setPendingSystemOpenPaths((current) => [...new Set([...current, ...paths])]);
+    };
+
+    void listen("markdown-files-open-requested", collectPendingPaths).then((dispose) => {
+      if (disposed) {
+        dispose();
+        return;
+      }
+      unlisten = dispose;
+      void collectPendingPaths();
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceReady || pendingSystemOpenPaths.length === 0) return;
+    const paths = pendingSystemOpenPaths;
+    setPendingSystemOpenPaths([]);
+    systemOpenChain.current = systemOpenChain.current.then(
+      () => openMarkdownPaths(paths, true),
+    );
+  }, [openMarkdownPaths, pendingSystemOpenPaths, workspaceReady]);
 
   const openDirectory = async () => {
     try {
