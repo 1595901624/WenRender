@@ -1040,6 +1040,15 @@ function App() {
     }
   };
 
+  const copyFilePath = async (path: string, absolute: boolean) => {
+    try {
+      await navigator.clipboard.writeText(path);
+      notify(absolute ? "已复制绝对路径" : "已复制路径", "success");
+    } catch (error) {
+      notify(`复制路径失败：${String(error)}`, "error");
+    }
+  };
+
   const renameRequestedFile = async (newName: string): Promise<boolean> => {
     if (!fileOperation || fileOperation.kind !== "rename") return false;
     const request = fileOperation;
@@ -1408,6 +1417,7 @@ function App() {
             onShowOutline={() => setSidebarMode("outline")}
             onShowSearch={() => setSidebarMode("search")}
             onRevealFile={(path) => void revealFileInManager(path)}
+            onCopyFilePath={(path, absolute) => void copyFilePath(path, absolute)}
             onRenameFile={(path, name) => requestFileOperation("rename", path, name)}
             onDeleteFile={(path, name) => requestFileOperation("delete", path, name)}
           />

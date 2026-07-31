@@ -5,6 +5,7 @@ import * as ScrollArea from "@radix-ui/react-scroll-area";
 import {
   ChevronDown,
   ChevronRight,
+  Copy,
   Eye,
   EyeOff,
   File,
@@ -42,6 +43,7 @@ type Props = {
   onShowOutline: () => void;
   onShowSearch: () => void;
   onRevealFile: (path: string) => void;
+  onCopyFilePath: (path: string, absolute: boolean) => void;
   onRenameFile: (path: string, name: string) => void;
   onDeleteFile: (path: string, name: string) => void;
 };
@@ -62,6 +64,7 @@ export function FileSidebar({
   onShowOutline,
   onShowSearch,
   onRevealFile,
+  onCopyFilePath,
   onRenameFile,
   onDeleteFile,
 }: Props) {
@@ -202,8 +205,10 @@ export function FileSidebar({
                   key={document.id}
                   disabled={!document.path || document.externalState === "deleted"}
                   path={document.path ?? ""}
+                  copyPath={document.name}
                   name={document.name}
                   onReveal={onRevealFile}
+                  onCopy={onCopyFilePath}
                   onRename={onRenameFile}
                   onDelete={onDeleteFile}
                 >
@@ -234,8 +239,10 @@ export function FileSidebar({
                     {document.path && document.externalState !== "deleted" && (
                       <FileActionsMenu
                         path={document.path}
+                        copyPath={document.name}
                         name={document.name}
                         onReveal={onRevealFile}
+                        onCopy={onCopyFilePath}
                         onRename={onRenameFile}
                         onDelete={onDeleteFile}
                       />
@@ -304,6 +311,7 @@ export function FileSidebar({
                     <DirectoryNodes
                       nodes={directory.children}
                       directoryId={directory.id}
+                      directoryPath={directory.path}
                       depth={1}
                       expanded={expanded}
                       showAllFiles={showAllFiles}
@@ -313,6 +321,7 @@ export function FileSidebar({
                       onSelect={onSelectTreeFile}
                       onNewInDirectory={onNewInDirectory}
                       onRevealFile={onRevealFile}
+                      onCopyFilePath={onCopyFilePath}
                       onRenameFile={onRenameFile}
                       onDeleteFile={onDeleteFile}
                     />
@@ -333,6 +342,7 @@ export function FileSidebar({
 function DirectoryNodes({
   nodes,
   directoryId,
+  directoryPath,
   depth,
   expanded,
   showAllFiles,
@@ -342,11 +352,13 @@ function DirectoryNodes({
   onSelect,
   onNewInDirectory,
   onRevealFile,
+  onCopyFilePath,
   onRenameFile,
   onDeleteFile,
 }: {
   nodes: DirectoryNode[];
   directoryId: string;
+  directoryPath: string;
   depth: number;
   expanded: Set<string>;
   showAllFiles: boolean;
@@ -356,6 +368,7 @@ function DirectoryNodes({
   onSelect: (node: DirectoryNode, directoryId: string) => void;
   onNewInDirectory: (directoryId: string, directoryPath: string, directoryName: string) => void;
   onRevealFile: (path: string) => void;
+  onCopyFilePath: (path: string, absolute: boolean) => void;
   onRenameFile: (path: string, name: string) => void;
   onDeleteFile: (path: string, name: string) => void;
 }) {
@@ -393,6 +406,7 @@ function DirectoryNodes({
                 <DirectoryNodes
                   nodes={node.children}
                   directoryId={directoryId}
+                  directoryPath={directoryPath}
                   depth={depth + 1}
                   expanded={expanded}
                   showAllFiles={showAllFiles}
@@ -402,6 +416,7 @@ function DirectoryNodes({
                   onSelect={onSelect}
                   onNewInDirectory={onNewInDirectory}
                   onRevealFile={onRevealFile}
+                  onCopyFilePath={onCopyFilePath}
                   onRenameFile={onRenameFile}
                   onDeleteFile={onDeleteFile}
                 />
@@ -415,8 +430,10 @@ function DirectoryNodes({
           <FileContextMenu
             key={node.path}
             path={node.path}
+            copyPath={relativeFilePath(directoryPath, node.path)}
             name={node.name}
             onReveal={onRevealFile}
+            onCopy={onCopyFilePath}
             onRename={onRenameFile}
             onDelete={onDeleteFile}
           >
@@ -451,8 +468,10 @@ function DirectoryNodes({
               </button>
               <FileActionsMenu
                 path={node.path}
+                copyPath={relativeFilePath(directoryPath, node.path)}
                 name={node.name}
                 onReveal={onRevealFile}
+                onCopy={onCopyFilePath}
                 onRename={onRenameFile}
                 onDelete={onDeleteFile}
               />
@@ -468,31 +487,76 @@ function FileContextMenu({
   children,
   disabled = false,
   path,
+  copyPath,
   name,
   onReveal,
+  onCopy,
   onRename,
   onDelete,
 }: {
   children: ReactNode;
   disabled?: boolean;
   path: string;
+  copyPath: string;
   name: string;
   onReveal: (path: string) => void;
+  onCopy: (path: string, absolute: boolean) => void;
   onRename: (path: string, name: string) => void;
   onDelete: (path: string, name: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [positioned, setPositioned] = useState(false);
+  const firstPositionFrame = useRef<number | null>(null);
+  const secondPositionFrame = useRef<number | null>(null);
+
+  const cancelPositionFrames = () => {
+    if (firstPositionFrame.current !== null) cancelAnimationFrame(firstPositionFrame.current);
+    if (secondPositionFrame.current !== null) cancelAnimationFrame(secondPositionFrame.current);
+    firstPositionFrame.current = null;
+    secondPositionFrame.current = null;
+  };
+
+  useEffect(() => cancelPositionFrames, []);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    cancelPositionFrames();
+    setOpen(nextOpen);
+    setPositioned(false);
+    if (!nextOpen) return;
+
+    // Radix 的右键锚点先以 (0, 0) 挂载，再在 effect 中更新到指针坐标。
+    // 延后两帧显示，避免桌面 WebView 把测量阶段绘制到左上角。
+    firstPositionFrame.current = requestAnimationFrame(() => {
+      secondPositionFrame.current = requestAnimationFrame(() => {
+        setPositioned(true);
+        firstPositionFrame.current = null;
+        secondPositionFrame.current = null;
+      });
+    });
+  };
+
   return (
-    <ContextMenu.Root>
+    <ContextMenu.Root open={open} onOpenChange={handleOpenChange}>
       <ContextMenu.Trigger asChild disabled={disabled}>
         {children}
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content
           collisionPadding={8}
-          className="z-50 min-w-36 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]"
+          className={clsx(
+            "z-50 min-w-36 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]",
+            positioned ? "visible" : "invisible",
+          )}
         >
           <ContextMenu.Item onSelect={() => onReveal(path)} className="menu-item">
             <FolderOpen size={14} />{fileManagerMenuLabel()}
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
+          <ContextMenu.Item onSelect={() => onCopy(copyPath, false)} className="menu-item">
+            <Copy size={14} />复制路径
+          </ContextMenu.Item>
+          <ContextMenu.Item onSelect={() => onCopy(path, true)} className="menu-item">
+            <Copy size={14} />复制绝对路径
           </ContextMenu.Item>
           <ContextMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
           <ContextMenu.Item onSelect={() => onRename(path, name)} className="menu-item">
@@ -512,14 +576,18 @@ function FileContextMenu({
 
 function FileActionsMenu({
   path,
+  copyPath,
   name,
   onReveal,
+  onCopy,
   onRename,
   onDelete,
 }: {
   path: string;
+  copyPath: string;
   name: string;
   onReveal: (path: string) => void;
+  onCopy: (path: string, absolute: boolean) => void;
   onRename: (path: string, name: string) => void;
   onDelete: (path: string, name: string) => void;
 }) {
@@ -545,6 +613,13 @@ function FileActionsMenu({
             <FolderOpen size={14} />{fileManagerMenuLabel()}
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
+          <DropdownMenu.Item onSelect={() => onCopy(copyPath, false)} className="menu-item">
+            <Copy size={14} />复制路径
+          </DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => onCopy(path, true)} className="menu-item">
+            <Copy size={14} />复制绝对路径
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
           <DropdownMenu.Item onSelect={() => onRename(path, name)} className="menu-item">
             <Pencil size={14} />重命名
           </DropdownMenu.Item>
@@ -552,7 +627,7 @@ function FileActionsMenu({
             onSelect={() => onDelete(path, name)}
             className="menu-item text-red-600 focus:bg-red-50 focus:text-red-700 dark:text-red-400 dark:focus:bg-red-950/40 dark:focus:text-red-300"
           >
-            <Trash2 size={14} />移到回收站
+            <Trash2 size={14} />删除
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
@@ -565,6 +640,19 @@ function fileManagerMenuLabel(): string {
   if (platform.includes("mac")) return "在访达中打开";
   if (platform.includes("win")) return "在资源管理器中打开";
   return "在文件管理器中打开";
+}
+
+function relativeFilePath(directoryPath: string, filePath: string): string {
+  const root = directoryPath.replace(/[\\/]+$/, "");
+  const normalizedRoot = root.replace(/\\/g, "/");
+  const normalizedFile = filePath.replace(/\\/g, "/");
+  const caseInsensitive = /^[a-z]:\//i.test(normalizedRoot);
+  const comparableRoot = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
+  const comparableFile = caseInsensitive ? normalizedFile.toLowerCase() : normalizedFile;
+  if (comparableFile.startsWith(`${comparableRoot}/`)) {
+    return filePath.slice(root.length + 1);
+  }
+  return filePath.split(/[\\/]/).pop() || filePath;
 }
 
 function hasMarkdown(node: DirectoryNode): boolean {
