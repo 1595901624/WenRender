@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ArrowLeft, Blocks, Braces, Check, ChevronDown, Clipboard, CloudUpload, Code2, Eye, FileDown, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Newspaper, Palette, PanelLeftClose, PanelLeftOpen, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
+import { ArrowLeft, Blocks, Braces, Check, ChevronDown, Clipboard, CloudUpload, Code2, Copy, Eye, FileDown, FileText, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Newspaper, Palette, PanelLeftClose, PanelLeftOpen, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
@@ -34,6 +34,7 @@ import {
   saveContentBlocks,
 } from "./lib/contentBlocks";
 import { parseImageSettings, type ImageSettings } from "./lib/imageSettings";
+import { markdownToPlainText, renderUnstyledMarkdown } from "./lib/exportFormats";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
 import {
@@ -1208,6 +1209,63 @@ function App() {
     }
   };
 
+  const copyMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(active.content);
+      notify("Markdown 已复制", "success");
+    } catch (error) {
+      notify(`复制 Markdown 失败：${String(error)}`, "error");
+    }
+  };
+
+  const exportPlainText = async () => {
+    try {
+      const defaultName = active.name.replace(/\.(?:md|markdown|mdown|mkd)$/i, "") + ".txt";
+      const path = await save({
+        defaultPath: defaultName,
+        filters: [{ name: "纯文本", extensions: ["txt"] }],
+      });
+      if (!path) return;
+      await writeTextFile(path, markdownToPlainText(active.content));
+      notify("纯文本已导出", "success");
+    } catch (error) {
+      notify(`导出纯文本失败：${String(error)}`, "error");
+    }
+  };
+
+  const copyUnstyledRichText = async () => {
+    const plainText = markdownToPlainText(active.content);
+    try {
+      const semanticHtml = renderUnstyledMarkdown(active.content, (source) => {
+        const localPath = resolveLocalArticleImagePath(source, active.path);
+        return localPath ? `wenrender-local-image:${encodeURIComponent(localPath)}` : source;
+      });
+      const embedded = await embedWorkspaceLocalImages(semanticHtml);
+      const blobHtml = new Blob([embedded.html], { type: "text/html" });
+      const blobText = new Blob([plainText], { type: "text/plain" });
+      await navigator.clipboard.write([
+        new ClipboardItem({ "text/html": blobHtml, "text/plain": blobText }),
+      ]);
+      const detail = embedded.embeddedCount > 0
+        ? `，已嵌入 ${embedded.embeddedCount} 张本地图片`
+        : "";
+      const failed = embedded.failedCount > 0
+        ? `；${embedded.failedCount} 张图片转换失败`
+        : "";
+      notify(
+        `无样式富文本已复制${detail}${failed}`,
+        embedded.failedCount > 0 ? "neutral" : "success",
+      );
+    } catch {
+      try {
+        await navigator.clipboard.writeText(plainText);
+        notify("富文本剪贴板不可用，已复制纯文本", "neutral");
+      } catch (error) {
+        notify(`复制无样式富文本失败：${String(error)}`, "error");
+      }
+    }
+  };
+
   const copyToWechat = async () => {
     let copySource = active.content;
     let uploadDetail = "";
@@ -1702,9 +1760,24 @@ function App() {
                   <DropdownMenu.Item onSelect={() => setWechatDraftOpen(true)} className="menu-item"><Newspaper size={15} />同步到公众号草稿箱</DropdownMenu.Item>
                   <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
                   <DropdownMenu.Item onSelect={() => void uploadCurrentArticleImages()} className="menu-item"><CloudUpload size={15} />上传文章图片</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={exportHtml} className="menu-item"><FileDown size={15} />导出 HTML</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={saveDocumentAs} className="menu-item"><Save size={15} />另存为 Markdown</DropdownMenu.Item>
                   {/* <DropdownMenu.Item onSelect={newDocument} className="menu-item"><Menu size={15} />新建文章</DropdownMenu.Item> */}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button className="icon-button" aria-label="导入与导出" title="导入与导出"><FileDown size={16} /></button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content align="end" className="z-50 min-w-48 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]">
+                  <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-400 dark:text-stone-500">复制</DropdownMenu.Label>
+                  <DropdownMenu.Item onSelect={() => void copyMarkdown()} className="menu-item"><Copy size={15} />复制 Markdown</DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => void copyUnstyledRichText()} className="menu-item"><Clipboard size={15} />复制无样式富文本</DropdownMenu.Item>
+                  <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
+                  <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-400 dark:text-stone-500">导出</DropdownMenu.Label>
+                  <DropdownMenu.Item onSelect={() => void exportHtml()} className="menu-item"><FileDown size={15} />导出 HTML</DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => void exportPlainText()} className="menu-item"><FileText size={15} />导出纯文本</DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => void saveDocumentAs()} className="menu-item"><Save size={15} />另存为 Markdown</DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
