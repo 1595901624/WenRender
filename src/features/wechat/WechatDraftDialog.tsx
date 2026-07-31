@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle, Check, FileImage, LoaderCircle, Newspaper, Settings } from "lucide-react";
 import clsx from "clsx";
+import { useDialogFocus } from "../../lib/dialogFocus";
 import {
   findFirstLocalMarkdownImage,
   getWechatArticleSettings,
@@ -30,6 +31,8 @@ export function WechatDraftDialog({
   onClose,
   onOpenSettings,
   onSynced,
+  onTaskStart,
+  onTaskFinish,
 }: {
   accounts: WechatAccount[];
   documentPath: string | null;
@@ -39,6 +42,8 @@ export function WechatDraftDialog({
   onClose: () => void;
   onOpenSettings: () => void;
   onSynced: (message: string) => void;
+  onTaskStart: (detail: string) => string;
+  onTaskFinish: (id: string, succeeded: boolean, detail: string) => void;
 }) {
   const stored = useMemo(
     () => documentPath ? getWechatArticleSettings(documentPath) : { drafts: {} },
@@ -147,6 +152,7 @@ export function WechatDraftDialog({
     setSyncing(true);
     setError("");
     setResult(null);
+    const taskId = onTaskStart("正在上传正文图片、封面并写入草稿箱");
     try {
       const linkedDraft = mode === "update" ? existingDraft : undefined;
       const synced = await invoke<SyncResult>("sync_wechat_draft", {
@@ -180,9 +186,13 @@ export function WechatDraftDialog({
       setDraftLinks(nextDrafts);
       setResult(synced);
       setMode("update");
-      onSynced(`${synced.updated ? "已更新" : "已创建"}「${selectedAccount.name}」草稿，正文图片 ${synced.uploadedImages} 张`);
+      const message = `${synced.updated ? "已更新" : "已创建"}「${selectedAccount.name}」草稿，正文图片 ${synced.uploadedImages} 张`;
+      onSynced(message);
+      onTaskFinish(taskId, true, message);
     } catch (syncError) {
-      setError(String(syncError));
+      const detail = String(syncError);
+      setError(detail);
+      onTaskFinish(taskId, false, detail);
     } finally {
       setSyncing(false);
     }
@@ -341,8 +351,11 @@ function DialogShell({
   children: React.ReactNode;
   onClose?: () => void;
 }) {
+  const scopeRef = useDialogFocus(onClose);
   return (
     <div
+      ref={scopeRef}
+      tabIndex={-1}
       className="fixed inset-0 z-[90] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose?.();

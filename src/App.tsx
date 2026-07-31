@@ -24,6 +24,8 @@ import { Preview, type PreviewHandle, type PreviewMode } from "./components/Prev
 import { TypographyPanel } from "./components/TypographyPanel";
 import { ThemeEditorPanel } from "./components/ThemeEditorPanel";
 import { TitleBar } from "./components/TitleBar";
+import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
+import { TaskStatusIndicator, type TaskStatus } from "./components/TaskStatusIndicator";
 import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
 import { hasUnsavedChanges, needsSaveAttention } from "./lib/document";
@@ -171,6 +173,8 @@ function App() {
     window.localStorage.getItem("wenrender-preview-mode") === "phone" ? "phone" : "web"
   ));
   const [notice, setNotice] = useState<Notice>(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [taskStatus, setTaskStatus] = useState<TaskStatus | null>(null);
   const [themeId, setThemeId] = useState(() => window.localStorage.getItem("wenrender-theme") ?? defaultTheme.id);
   const [customThemes, setCustomThemes] = useState(loadCustomThemes);
   const [codeThemeId, setCodeThemeId] = useState(
@@ -202,6 +206,7 @@ function App() {
   const documentsRef = useRef(documents);
   const systemOpenChain = useRef(Promise.resolve());
   const allowWindowClose = useRef(false);
+  const taskDismissTimer = useRef<number | null>(null);
   documentsRef.current = documents;
 
   // 目录需要重新扫描以反映磁盘最新状态，文件则按上次的打开顺序恢复。
@@ -426,6 +431,24 @@ function App() {
     window.setTimeout(() => setNotice(null), 2200);
   }, []);
 
+  const startTask = useCallback((label: string, detail?: string) => {
+    if (taskDismissTimer.current !== null) window.clearTimeout(taskDismissTimer.current);
+    const id = createId();
+    setTaskStatus({ id, label, detail, state: "running" });
+    return id;
+  }, []);
+
+  const finishTask = useCallback((id: string, detail?: string) => {
+    setTaskStatus((task) => task?.id === id ? { ...task, detail, state: "success" } : task);
+    taskDismissTimer.current = window.setTimeout(() => {
+      setTaskStatus((task) => task?.id === id ? null : task);
+    }, 3600);
+  }, []);
+
+  const failTask = useCallback((id: string, detail?: string) => {
+    setTaskStatus((task) => task?.id === id ? { ...task, detail, state: "error" } : task);
+  }, []);
+
   const persistArticlePreference = useCallback((
     document: OpenDocument | undefined,
     patch: Parameters<typeof updateArticlePreferences>[1],
@@ -628,6 +651,8 @@ function App() {
       return [];
     }
 
+    const taskId = startTask("导入图片", `正在处理 ${images.length} 张图片`);
+
     const markdownImages: string[] = [];
     const storedImages: StoredArticleImage[] = [];
     let failedCount = 0;
@@ -702,12 +727,14 @@ function App() {
         `已保存 ${storedImages.length} 张图片${savedDetail}${uploadDetail}${failedDetail}${uploadFailedDetail}`,
         failedCount > 0 || uploadFailedCount > 0 ? "neutral" : "success",
       );
+      finishTask(taskId, `已保存 ${storedImages.length} 张${uploadedCount > 0 ? `，上传 ${uploadedCount} 张` : ""}${failedCount + uploadFailedCount > 0 ? `，${failedCount + uploadFailedCount} 张失败` : ""}`);
     } else {
       const detail = failedCount === 1 && lastError ? `：${lastError}` : `（${failedCount} 张）`;
       notify(`图片导入失败${detail}`, "error");
+      failTask(taskId, lastError || `${failedCount} 张图片处理失败`);
     }
     return markdownImages;
-  }, [active.directoryId, active.externalState, active.path, directories, imageSettings, notify]);
+  }, [active.directoryId, active.externalState, active.path, directories, failTask, finishTask, imageSettings, notify, startTask]);
 
   const uploadCurrentArticleImages = useCallback(async (
     source = active.content,
@@ -721,7 +748,16 @@ function App() {
       if (announce) notify("请先保存当前文章，再上传图片", "error");
       return { content: source, uploadedCount: 0, failedCount: 0, lastError: "文章尚未保存" };
     }
-    const result = await uploadArticleLocalImages(source, active.path, imageSettings.hosting);
+    const taskId = announce ? startTask("上传文章图片", "正在上传到图床") : null;
+    let result: Awaited<ReturnType<typeof uploadArticleLocalImages>>;
+    try {
+      result = await uploadArticleLocalImages(source, active.path, imageSettings.hosting);
+    } catch (error) {
+      const detail = String(error);
+      if (announce) notify(`图片上传失败：${detail}`, "error");
+      if (taskId) failTask(taskId, detail);
+      return { content: source, uploadedCount: 0, failedCount: 1, lastError: detail };
+    }
     if (result.content !== source) {
       setDocuments((items) => items.map((item) => (
         item.id === activeId ? { ...item, content: result.content } : item
@@ -731,14 +767,17 @@ function App() {
       if (result.uploadedCount > 0) {
         const failed = result.failedCount > 0 ? `；${result.failedCount} 张失败` : "";
         notify(`已上传并替换 ${result.uploadedCount} 张本地图片${failed}`, result.failedCount > 0 ? "neutral" : "success");
+        if (taskId) finishTask(taskId, `已上传 ${result.uploadedCount} 张${failed}`);
       } else if (result.failedCount > 0) {
         notify(`图片上传失败：${result.lastError}`, "error");
+        if (taskId) failTask(taskId, result.lastError);
       } else {
         notify("当前文章没有需要上传的本地图片", "neutral");
+        if (taskId) finishTask(taskId, "没有需要上传的本地图片");
       }
     }
     return result;
-  }, [active.content, active.path, activeId, imageSettings.hosting, notify]);
+  }, [active.content, active.path, activeId, failTask, finishTask, imageSettings.hosting, notify, startTask]);
 
   const chooseImageStorageDirectory = useCallback(async () => {
     try {
@@ -793,6 +832,7 @@ function App() {
   };
 
   const importHtmlDocument = async () => {
+    let taskId: string | null = null;
     try {
       const selected = await open({
         multiple: false,
@@ -800,6 +840,7 @@ function App() {
         filters: [{ name: "HTML", extensions: ["html", "htm"] }],
       });
       if (!selected || Array.isArray(selected)) return;
+      taskId = startTask("导入 HTML", "正在提取正文并转换 Markdown");
       const { convertHtmlFileToMarkdown, decodeHtmlBytes } = await import("./lib/documentConversion");
       const result = await convertHtmlFileToMarkdown(
         decodeHtmlBytes(await readFile(selected)),
@@ -810,12 +851,15 @@ function App() {
       addImportedDocument(selected, result.markdown);
       const warning = result.warnings.length > 0 ? `，有 ${result.warnings.length} 张本地图片未能读取` : "";
       notify(`HTML 已导入为新的 Markdown 文章${warning}`, result.warnings.length > 0 ? "neutral" : "success");
+      finishTask(taskId, `已生成 Markdown${warning}`);
     } catch (error) {
       notify(`导入 HTML 失败：${String(error)}`, "error");
+      if (taskId) failTask(taskId, String(error));
     }
   };
 
   const importDocxDocument = async () => {
+    let taskId: string | null = null;
     try {
       const selected = await open({
         multiple: false,
@@ -823,6 +867,7 @@ function App() {
         filters: [{ name: "Word 文档", extensions: ["docx"] }],
       });
       if (!selected || Array.isArray(selected)) return;
+      taskId = startTask("导入 DOCX", "正在解析文档与图片");
       const { convertDocxToMarkdown } = await import("./lib/documentConversion");
       const bytes = await readFile(selected);
       const arrayBuffer = bytes.buffer.slice(
@@ -834,8 +879,10 @@ function App() {
       addImportedDocument(selected, result.markdown);
       const warning = result.warnings.length > 0 ? `，有 ${result.warnings.length} 项格式未完全转换` : "";
       notify(`DOCX 已导入为新的 Markdown 文章${warning}`, result.warnings.length > 0 ? "neutral" : "success");
+      finishTask(taskId, `已生成 Markdown${warning}`);
     } catch (error) {
       notify(`导入 DOCX 失败：${String(error)}`, "error");
+      if (taskId) failTask(taskId, String(error));
     }
   };
 
@@ -1265,17 +1312,22 @@ function App() {
   };
 
   const exportHtml = async () => {
+    let taskId: string | null = null;
     try {
       const path = await save({ defaultPath: active.name.replace(/\.md$/i, "") + ".html", filters: [{ name: "HTML", extensions: ["html"] }] });
       if (!path) return;
+      taskId = startTask("导出 HTML", "正在写入文件");
       await writeTextFile(path, fullHtml);
       notify("HTML 已导出", "success");
+      finishTask(taskId, "HTML 文件已保存");
     } catch (error) {
       notify(`导出失败：${String(error)}`, "error");
+      if (taskId) failTask(taskId, String(error));
     }
   };
 
   const exportPrintPdf = async () => {
+    const taskId = startTask("导出 PDF", "正在生成打印文档");
     try {
       const printRendered = renderMarkdown(
         active.content,
@@ -1291,8 +1343,10 @@ function App() {
       const title = active.name.replace(/\.(?:md|markdown|mdown|mkd)$/i, "");
       notify("正在打开系统打印窗口，请选择保存为 PDF", "neutral");
       await printHtmlAsPdf(wrapHtml(embedded.html, title, baseTheme, typographyOverrides));
+      finishTask(taskId, "打印窗口已打开，请选择保存为 PDF");
     } catch (error) {
       notify(`导出 PDF 失败：${String(error)}`, "error");
+      failTask(taskId, String(error));
     }
   };
 
@@ -1306,6 +1360,7 @@ function App() {
   };
 
   const exportPlainText = async () => {
+    let taskId: string | null = null;
     try {
       const defaultName = active.name.replace(/\.(?:md|markdown|mdown|mkd)$/i, "") + ".txt";
       const path = await save({
@@ -1313,10 +1368,13 @@ function App() {
         filters: [{ name: "纯文本", extensions: ["txt"] }],
       });
       if (!path) return;
+      taskId = startTask("导出纯文本", "正在写入文件");
       await writeTextFile(path, markdownToPlainText(active.content));
       notify("纯文本已导出", "success");
+      finishTask(taskId, "纯文本文件已保存");
     } catch (error) {
       notify(`导出纯文本失败：${String(error)}`, "error");
+      if (taskId) failTask(taskId, String(error));
     }
   };
 
@@ -1354,6 +1412,7 @@ function App() {
   };
 
   const copyToWechat = async () => {
+    const taskId = startTask("复制到公众号", "正在处理样式与本地图片");
     let copySource = active.content;
     let uploadDetail = "";
     let uploadFailed = false;
@@ -1394,11 +1453,18 @@ function App() {
         ? `；${embedded.failedCount} 张图片转换失败`
         : "";
       notify(`已复制，可直接粘贴到公众号编辑器${uploadDetail}${detail}${failed}`, embedded.failedCount > 0 || uploadFailed ? "neutral" : "success");
+      finishTask(taskId, `已写入剪贴板${uploadDetail}${detail}${failed}`);
     } catch {
-      await navigator.clipboard.writeText(
-        wrapHtml(embedded.html, active.name.replace(/\.md$/i, ""), baseTheme, typographyOverrides),
-      );
-      notify("已复制 HTML 源码", "neutral");
+      try {
+        await navigator.clipboard.writeText(
+          wrapHtml(embedded.html, active.name.replace(/\.md$/i, ""), baseTheme, typographyOverrides),
+        );
+        notify("已复制 HTML 源码", "neutral");
+        finishTask(taskId, "富文本不可用，已复制 HTML 源码");
+      } catch (error) {
+        notify(`复制失败：${String(error)}`, "error");
+        failTask(taskId, String(error));
+      }
     }
   };
 
@@ -1482,8 +1548,56 @@ function App() {
     await saveOneDocument(document, { saveAs: true });
   };
 
+  const commandPaletteCommands: PaletteCommand[] = [
+    { id: "save", label: "保存文章", group: "文件", shortcut: "Ctrl/⌘ S", icon: Save, run: () => void saveDocument() },
+    { id: "open", label: "打开 Markdown 文件", group: "文件", shortcut: "Ctrl/⌘ O", icon: FolderOpen, run: () => void openDocument() },
+    { id: "settings", label: "打开设置", group: "文件", keywords: "偏好 配置", icon: Settings, run: () => { setSettingsInitialSection("general"); setActivePage("settings"); } },
+    { id: "search", label: "查找与替换", group: "编辑", shortcut: "Ctrl/⌘ F", icon: Search, run: () => editorRef.current?.openSearch() },
+    { id: "blocks", label: "打开内容块", group: "编辑", keywords: "插入内容块 可复用 /", shortcut: "Ctrl/⌘ ⇧ K", icon: Blocks, run: () => { setSidebarOpen(true); setSidebarMode("blocks"); setFocusMode(false); setActivePage("workspace"); } },
+    { id: "typography", label: "调整文章排版", group: "外观", keywords: "字体 字号 行距 标题", icon: Type, run: () => { setTypographyPanelOpen(true); setThemeEditorOpen(false); setActivePage("workspace"); if (viewMode === "editor") setViewMode("split"); } },
+    { id: "view-editor", label: "切换到仅编辑", group: "视图", icon: Code2, run: () => { setFocusMode(false); setViewMode("editor"); setActivePage("workspace"); } },
+    { id: "view-split", label: "切换到分栏视图", group: "视图", icon: SplitSquareHorizontal, run: () => { setFocusMode(false); setViewMode("split"); setActivePage("workspace"); } },
+    { id: "view-preview", label: "切换到仅预览", group: "视图", icon: Eye, run: () => { setFocusMode(false); setViewMode("preview"); setActivePage("workspace"); } },
+    { id: "focus", label: focusMode ? "退出专注模式" : "进入专注模式", group: "视图", shortcut: "Ctrl/⌘ ⇧ M", icon: focusMode ? Minimize2 : Focus, run: () => { setFocusMode((value) => !value); setActivePage("workspace"); } },
+    { id: "sync-scroll", label: syncScroll ? "关闭同步滚动" : "开启同步滚动", group: "视图", icon: Link2, run: () => setSyncScroll((value) => !value) },
+    { id: "copy-wechat", label: "复制到公众号", group: "发布", keywords: "微信 富文本", icon: Clipboard, run: () => void copyToWechat() },
+    { id: "sync-wechat", label: "同步到公众号草稿箱", group: "发布", keywords: "微信 创建 更新 草稿", icon: Newspaper, run: () => setWechatDraftOpen(true) },
+    { id: "upload-images", label: "上传文章图片", group: "发布", keywords: "图床 S3 OSS COS GitHub R2", icon: CloudUpload, run: () => void uploadCurrentArticleImages() },
+    { id: "import-html", label: "导入 HTML", group: "导入与导出", icon: FileInput, run: () => void importHtmlDocument() },
+    { id: "import-docx", label: "导入 DOCX", group: "导入与导出", keywords: "Word", icon: FileInput, run: () => void importDocxDocument() },
+    { id: "export-html", label: "导出 HTML", group: "导入与导出", icon: FileDown, run: () => void exportHtml() },
+    { id: "export-pdf", label: "导出 PDF（打印）", group: "导入与导出", keywords: "打印", icon: Printer, run: () => void exportPrintPdf() },
+    { id: "export-text", label: "导出纯文本", group: "导入与导出", keywords: "txt", icon: FileText, run: () => void exportPlainText() },
+    { id: "copy-markdown", label: "复制 Markdown", group: "导入与导出", icon: Copy, run: () => void copyMarkdown() },
+    { id: "copy-unstyled", label: "复制无样式富文本", group: "导入与导出", icon: Clipboard, run: () => void copyUnstyledRichText() },
+    { id: "save-as", label: "另存为 Markdown", group: "导入与导出", icon: Save, run: () => void saveDocumentAs() },
+    ...allThemes.map((theme) => ({
+      id: `theme-${theme.id}`,
+      label: `切换主题：${theme.name}`,
+      description: theme.description,
+      group: "文章主题",
+      keywords: "主题 配色",
+      icon: Palette,
+      run: () => selectArticleTheme(theme.id),
+    })),
+    ...contentBlocks.map((block) => ({
+      id: `block-${block.id}`,
+      label: `插入内容块：${block.title}`,
+      description: `/${block.command}`,
+      group: "内容块",
+      keywords: `${block.command} ${block.content.slice(0, 80)}`,
+      icon: Blocks,
+      run: () => insertContentBlock(block.content),
+    })),
+  ];
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen((value) => !value);
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
         event.preventDefault();
         void saveDocument();
@@ -1515,18 +1629,24 @@ function App() {
         setFocusMode(false);
         setActivePage("workspace");
       }
-      if (event.key === "Escape" && focusMode) {
+      if (event.key === "Escape" && commandPaletteOpen) {
+        setCommandPaletteOpen(false);
+      } else if (event.key === "Escape" && focusMode) {
         setFocusMode(false);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [active, focusMode]);
+  }, [active, commandPaletteOpen, focusMode]);
+
+  useEffect(() => () => {
+    if (taskDismissTimer.current !== null) window.clearTimeout(taskDismissTimer.current);
+  }, []);
 
   return (
     <Tooltip.Provider delayDuration={350}>
       <div className="flex h-screen min-w-[900px] flex-col overflow-hidden bg-[#f3f3f1] text-ink dark:bg-[#171815] dark:text-stone-100">
-        <TitleBar />
+        <TitleBar onOpenCommandPalette={() => setCommandPaletteOpen(true)} />
         <div className="flex min-h-0 flex-1 overflow-hidden">
         {sidebarOpen && !focusMode && sidebarMode === "files" && (
           <FileSidebar
@@ -1726,146 +1846,52 @@ function App() {
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button
-                  className="inline-flex h-8 max-w-36 items-center gap-2 rounded-lg px-2.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
-                  title="选择代码高亮主题"
-                >
-                  <Braces size={15} className="shrink-0" />
-                  <span className="truncate">{codeTheme.name}</span>
-                  <ChevronDown size={13} className="shrink-0 text-stone-400" />
-                </button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 w-72 rounded-2xl border border-stone-200 bg-white p-2.5 shadow-[0_18px_50px_rgba(28,25,23,0.16)] dark:border-stone-700 dark:bg-[#292a27]">
-                  <div className="px-2 pb-2.5 pt-1">
-                    <div className="text-sm font-semibold text-stone-800 dark:text-stone-100">代码主题</div>
-                    <div className="mt-0.5 text-[11px] text-stone-400">使用 Highlight.js 官方配色</div>
-                  </div>
-                  <div className="space-y-1">
-                    {codeThemes.map((item) => (
-                      <DropdownMenu.Item
-                        key={item.id}
-                        onSelect={() => selectCodeTheme(item.id)}
-                        className={clsx(
-                          "flex cursor-default items-center gap-3 rounded-xl border p-2 outline-none transition",
-                          item.id === selectedCodeThemeId
-                            ? "border-stone-300 bg-stone-50 dark:border-stone-600 dark:bg-stone-800"
-                            : "border-transparent focus:bg-stone-50 dark:focus:bg-stone-800",
-                        )}
-                      >
-                        <div
-                          className="grid h-9 w-14 shrink-0 place-items-center rounded-md border font-mono text-[11px] shadow-sm"
-                          style={{
-                            backgroundColor: item.background,
-                            borderColor: item.border,
-                            color: item.swatches[1],
-                          }}
-                        >
-                          {"</>"}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="truncate text-sm font-medium text-stone-800 dark:text-stone-100">{item.name}</span>
-                            <span className="flex shrink-0 overflow-hidden rounded-full ring-1 ring-black/5">
-                              {item.swatches.map((color) => (
-                                <span key={color} className="h-2.5 w-2.5" style={{ backgroundColor: color }} />
-                              ))}
-                            </span>
-                          </div>
-                          <div className="mt-0.5 truncate text-[11px] text-stone-400">{item.description}</div>
-                        </div>
-                        {item.id === selectedCodeThemeId && <Check size={15} className="shrink-0 text-stone-800 dark:text-stone-100" />}
-                      </DropdownMenu.Item>
-                    ))}
-                  </div>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-            <button
-              type="button"
-              aria-pressed={typographyPanelOpen}
-              className={clsx(
-                "relative inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition",
-                typographyPanelOpen
-                  ? "bg-stone-100 text-stone-900 dark:bg-stone-800 dark:text-stone-100"
-                  : "text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800",
-              )}
-              title="调整文章字体与标题层级"
-              onClick={() => {
-                setTypographyPanelOpen((value) => !value);
-                setThemeEditorOpen(false);
-                if (viewMode === "editor") setViewMode("split");
-              }}
-            >
-              <Type size={15} />
-              <span>排版</span>
-              {typographyCustomCount > 0 && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
-            </button>
-            <ToolbarButton
-              label="可复用内容块（Ctrl+Shift+K）"
-              onClick={() => {
-                setSidebarOpen(true);
-                setSidebarMode("blocks");
-                setFocusMode(false);
-                setActivePage("workspace");
-              }}
-            >
-              <Blocks size={17} />
-            </ToolbarButton>
-            <ToolbarButton
-              label={focusMode ? "退出专注模式（Ctrl+Shift+M）" : "专注模式（Ctrl+Shift+M）"}
-              onClick={() => {
-                setFocusMode((value) => !value);
-                setActivePage("workspace");
-              }}
-            >
-              {focusMode ? <Minimize2 size={17} /> : <Focus size={17} />}
-            </ToolbarButton>
             <div className="flex rounded-lg bg-stone-100 p-0.5 dark:bg-stone-800">
               {([
                 ["editor", Code2, "仅编辑"],
                 ["split", SplitSquareHorizontal, "分栏"],
                 ["preview", Eye, "仅预览"],
               ] as const).map(([mode, Icon, label]) => (
-                <button key={mode} title={label} onClick={() => { setFocusMode(false); setViewMode(mode); }} className={clsx("rounded-md p-1.5 transition", effectiveViewMode === mode ? "bg-white text-[#20211f] shadow-sm dark:bg-stone-700 dark:text-stone-100" : "text-stone-400 hover:text-stone-600 dark:hover:text-stone-200")}>
+                <button key={mode} type="button" aria-label={label} aria-pressed={effectiveViewMode === mode} title={label} onClick={() => { setFocusMode(false); setViewMode(mode); }} className={clsx("rounded-md p-1.5 transition focus-visible:ring-2 focus-visible:ring-moss-500", effectiveViewMode === mode ? "bg-white text-[#20211f] shadow-sm dark:bg-stone-700 dark:text-stone-100" : "text-stone-500 hover:text-stone-700 dark:text-stone-300 dark:hover:text-stone-100")}>
                   <Icon size={16} />
                 </button>
               ))}
             </div>
-            <ToolbarButton label={syncScroll ? "同步滚动已开启" : "同步滚动已关闭"} onClick={() => setSyncScroll((value) => !value)}>
-              <Link2 size={17} className={syncScroll ? "text-[#20211f] dark:text-stone-100" : "text-stone-300 dark:text-stone-600"} />
-            </ToolbarButton>
             <button className="ml-1 inline-flex h-9 items-center gap-2 rounded-lg bg-[#20211f] px-3.5 text-sm font-medium text-white transition hover:bg-black" onClick={copyToWechat}>
               <Clipboard size={16} />复制到公众号
             </button>
             <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild><button className="icon-button" aria-label="更多发布操作"><ChevronDown size={16} /></button></DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" className="z-50 min-w-44 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]">
-                  <DropdownMenu.Item onSelect={() => setWechatDraftOpen(true)} className="menu-item"><Newspaper size={15} />同步到公众号草稿箱</DropdownMenu.Item>
-                  <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
-                  <DropdownMenu.Item onSelect={() => void uploadCurrentArticleImages()} className="menu-item"><CloudUpload size={15} />上传文章图片</DropdownMenu.Item>
-                  {/* <DropdownMenu.Item onSelect={newDocument} className="menu-item"><Menu size={15} />新建文章</DropdownMenu.Item> */}
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-            <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
-                <button className="icon-button" aria-label="导入与导出" title="导入与导出"><FileDown size={16} /></button>
+                <button className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 focus-visible:ring-2 focus-visible:ring-moss-500 dark:text-stone-300 dark:hover:bg-stone-800" aria-label="更多工具">
+                  <Menu size={15} /><span>工具</span><ChevronDown size={13} />
+                </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" className="z-50 min-w-48 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]">
-                  <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-400 dark:text-stone-500">导入</DropdownMenu.Label>
+                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 min-w-60 rounded-xl border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-600 dark:bg-[#292a27]">
+                  <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-500 dark:text-stone-300">写作工具</DropdownMenu.Label>
+                  <DropdownMenu.Item onSelect={() => { setTypographyPanelOpen((value) => !value); setThemeEditorOpen(false); if (viewMode === "editor") setViewMode("split"); }} className="menu-item"><Type size={15} />排版设置{typographyCustomCount > 0 && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-amber-500" />}</DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => { setSidebarOpen(true); setSidebarMode("blocks"); setFocusMode(false); setActivePage("workspace"); }} className="menu-item"><Blocks size={15} />内容块<span className="ml-auto text-[10px] text-stone-500 dark:text-stone-300">Ctrl/⌘ ⇧ K</span></DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => { setFocusMode((value) => !value); setActivePage("workspace"); }} className="menu-item">{focusMode ? <Minimize2 size={15} /> : <Focus size={15} />}{focusMode ? "退出专注模式" : "专注模式"}</DropdownMenu.Item>
+                  <DropdownMenu.CheckboxItem checked={syncScroll} onCheckedChange={() => setSyncScroll((value) => !value)} className="menu-item">
+                    <Link2 size={15} />同步滚动
+                    <DropdownMenu.ItemIndicator className="ml-auto"><Check size={14} /></DropdownMenu.ItemIndicator>
+                  </DropdownMenu.CheckboxItem>
+                  <DropdownMenu.Sub>
+                    <DropdownMenu.SubTrigger className="menu-item"><Braces size={15} />代码主题<span className="ml-auto text-xs text-stone-500 dark:text-stone-300">{codeTheme.name} ›</span></DropdownMenu.SubTrigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.SubContent sideOffset={6} className="z-[60] min-w-52 rounded-xl border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-600 dark:bg-[#292a27]">
+                        {codeThemes.map((item) => <DropdownMenu.Item key={item.id} onSelect={() => selectCodeTheme(item.id)} className="menu-item">{item.id === selectedCodeThemeId ? <Check size={14} /> : <span className="w-3.5" />}{item.name}</DropdownMenu.Item>)}
+                      </DropdownMenu.SubContent>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Sub>
+                  <DropdownMenu.Item onSelect={() => setWechatDraftOpen(true)} className="menu-item"><Newspaper size={15} />同步到公众号草稿箱</DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => void uploadCurrentArticleImages()} className="menu-item"><CloudUpload size={15} />上传文章图片</DropdownMenu.Item>
+                  <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
+                  <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-500 dark:text-stone-300">导入与导出</DropdownMenu.Label>
                   <DropdownMenu.Item onSelect={() => void importHtmlDocument()} className="menu-item"><FileInput size={15} />导入 HTML</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={() => void importDocxDocument()} className="menu-item"><FileInput size={15} />导入 DOCX</DropdownMenu.Item>
-                  <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
-                  <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-400 dark:text-stone-500">复制</DropdownMenu.Label>
                   <DropdownMenu.Item onSelect={() => void copyMarkdown()} className="menu-item"><Copy size={15} />复制 Markdown</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={() => void copyUnstyledRichText()} className="menu-item"><Clipboard size={15} />复制无样式富文本</DropdownMenu.Item>
-                  <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
-                  <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-400 dark:text-stone-500">导出</DropdownMenu.Label>
                   <DropdownMenu.Item onSelect={() => void exportHtml()} className="menu-item"><FileDown size={15} />导出 HTML</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={() => void exportPrintPdf()} className="menu-item"><Printer size={15} />导出 PDF（打印）</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={() => void exportPlainText()} className="menu-item"><FileText size={15} />导出纯文本</DropdownMenu.Item>
@@ -2009,6 +2035,11 @@ function App() {
               setActivePage("settings");
             }}
             onSynced={(message) => notify(message, "success")}
+            onTaskStart={(detail) => startTask("同步公众号草稿", detail)}
+            onTaskFinish={(id, succeeded, detail) => {
+              if (succeeded) finishTask(id, detail);
+              else failTask(id, detail);
+            }}
           />
         )}
 
@@ -2036,8 +2067,18 @@ function App() {
           onDeleteFile={deleteRequestedFile}
         />
 
+        {commandPaletteOpen && (
+          <CommandPalette
+            open
+            commands={commandPaletteCommands}
+            onClose={() => setCommandPaletteOpen(false)}
+          />
+        )}
+
+        <TaskStatusIndicator task={taskStatus} onDismiss={() => setTaskStatus(null)} />
+
         {notice && (
-          <div className={clsx("fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full px-4 py-2 text-sm shadow-xl", notice.tone === "error" ? "bg-red-600 text-white" : "bg-[#1f2922] text-white")}>
+          <div role="status" aria-live="polite" className={clsx("fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full px-4 py-2 text-sm shadow-xl", notice.tone === "error" ? "bg-red-600 text-white" : "bg-[#1f2922] text-white")}>
             {notice.tone === "success" && <Check size={15} className="text-emerald-400" />}{notice.message}
           </div>
         )}

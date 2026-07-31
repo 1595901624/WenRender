@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, FilePlus2, Pencil, Trash2 } from "lucide-react";
 import type { FileSnapshot, OpenDocument } from "../../types";
+import { useDialogFocus } from "../../lib/dialogFocus";
 
 type PendingClose = {
   kind: "document" | "directory" | "application";
@@ -72,7 +73,7 @@ export function AppDialogs({
   return (
     <>
       {pendingClose && (
-        <div className="fixed inset-0 z-[70] grid place-items-center bg-black/25 p-5 backdrop-blur-[1px]">
+        <DialogFocusBoundary onEscape={onCancelPendingClose} className="fixed inset-0 z-[70] grid place-items-center bg-black/25 p-5 backdrop-blur-[1px]">
           <div role="alertdialog" aria-modal="true" className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl dark:border-stone-700 dark:bg-[#242522]">
             <div className="flex items-start gap-3">
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300">
@@ -95,11 +96,11 @@ export function AppDialogs({
               <button className="rounded-lg bg-[#20211f] px-3.5 py-2 text-sm font-medium text-white hover:bg-black" onClick={onSavePendingClose}>保存并继续</button>
             </div>
           </div>
-        </div>
+        </DialogFocusBoundary>
       )}
 
       {saveConflict && conflictDocument && (
-        <div className="fixed inset-0 z-[80] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
+        <DialogFocusBoundary onEscape={onCancelConflict} className="fixed inset-0 z-[80] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
           <div role="alertdialog" aria-modal="true" className="flex max-h-[88vh] w-full max-w-5xl flex-col rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl dark:border-stone-700 dark:bg-[#242522]">
             <div className="flex items-start gap-3">
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-orange-50 text-orange-600 dark:bg-orange-950/50 dark:text-orange-300">
@@ -135,7 +136,7 @@ export function AppDialogs({
               </button>
             </div>
           </div>
-        </div>
+        </DialogFocusBoundary>
       )}
 
       {newMarkdownTarget && (
@@ -196,7 +197,7 @@ function RenameFileDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[85] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
+    <DialogFocusBoundary onEscape={submitting ? undefined : onCancel} className="fixed inset-0 z-[85] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
       <form
         role="dialog"
         aria-modal="true"
@@ -231,7 +232,7 @@ function RenameFileDialog({
           </button>
         </div>
       </form>
-    </div>
+    </DialogFocusBoundary>
   );
 }
 
@@ -254,7 +255,7 @@ function DeleteFileDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[85] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
+    <DialogFocusBoundary onEscape={submitting ? undefined : onCancel} className="fixed inset-0 z-[85] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
       <div role="alertdialog" aria-modal="true" aria-labelledby="delete-file-title" className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl dark:border-stone-700 dark:bg-[#242522]">
         <div className="flex items-start gap-3">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300">
@@ -281,7 +282,7 @@ function DeleteFileDialog({
           </button>
         </div>
       </div>
-    </div>
+    </DialogFocusBoundary>
   );
 }
 
@@ -311,7 +312,7 @@ function NewMarkdownDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[85] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
+    <DialogFocusBoundary onEscape={submitting ? undefined : onCancel} className="fixed inset-0 z-[85] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
       <form onSubmit={submit} className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl dark:border-stone-700 dark:bg-[#242522]">
         <div className="flex items-start gap-3">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-200">
@@ -342,8 +343,21 @@ function NewMarkdownDialog({
           </button>
         </div>
       </form>
-    </div>
+    </DialogFocusBoundary>
   );
+}
+
+function DialogFocusBoundary({
+  children,
+  className,
+  onEscape,
+}: {
+  children: React.ReactNode;
+  className: string;
+  onEscape?: () => void;
+}) {
+  const scopeRef = useDialogFocus(onEscape);
+  return <div ref={scopeRef} tabIndex={-1} className={className}>{children}</div>;
 }
 
 function ConflictPane({ title, content }: { title: string; content: string }) {

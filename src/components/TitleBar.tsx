@@ -1,4 +1,4 @@
-import { Copy, Maximize2, Minus, Square, X } from "lucide-react";
+import { Copy, Maximize2, Minus, Search, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useState } from "react";
 
@@ -16,7 +16,7 @@ function isTauriWindow() {
 }
 
 /** Native-window controls with platform-appropriate placement and appearance. */
-export function TitleBar() {
+export function TitleBar({ onOpenCommandPalette }: { onOpenCommandPalette: () => void }) {
   const platform = getDesktopPlatform();
   const isMacOS = platform === "macos";
   const [isMacControlsHovered, setIsMacControlsHovered] = useState(false);
@@ -83,7 +83,7 @@ export function TitleBar() {
     <div
       className={`titlebar titlebar-${platform}`}
       onMouseDown={(event) => {
-        const clickedControl = event.target instanceof Element && event.target.closest(".window-controls");
+        const clickedControl = event.target instanceof Element && event.target.closest(".window-controls, .titlebar-command");
         if (event.button !== 0 || clickedControl) return;
 
         const startX = event.clientX;
@@ -103,7 +103,7 @@ export function TitleBar() {
         document.addEventListener("mouseup", stopTracking);
       }}
       onDoubleClick={(event) => {
-        if (!(event.target instanceof Element) || !event.target.closest(".window-controls")) {
+        if (!(event.target instanceof Element) || !event.target.closest(".window-controls, .titlebar-command")) {
           event.preventDefault();
           toggleMaximize();
         }
@@ -114,6 +114,18 @@ export function TitleBar() {
         <span className="titlebar-name">文染</span>
         {/* <span className="titlebar-subtitle">Markdown 编辑器</span> */}
       </div>
+      <button
+        type="button"
+        className="titlebar-command"
+        data-tauri-drag-region="false"
+        onClick={onOpenCommandPalette}
+        aria-label="打开命令面板"
+        title="命令面板（Ctrl+K / ⌘K）"
+      >
+        <Search size={12} />
+        <span>搜索命令</span>
+        <kbd>Ctrl/⌘ K</kbd>
+      </button>
       {!isMacOS && controls}
     </div>
   );
