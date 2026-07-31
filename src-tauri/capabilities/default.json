@@ -12,6 +12,7 @@
     "core:window:allow-set-theme",
     "dialog:default",
     "fs:allow-read-dir",
+    "fs:allow-read-file",
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
     "opener:allow-reveal-item-in-dir",

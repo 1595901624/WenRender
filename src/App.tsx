@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { readFile, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ArrowLeft, Blocks, Braces, Check, ChevronDown, Clipboard, CloudUpload, Code2, Copy, Eye, FileDown, FileText, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Newspaper, Palette, PanelLeftClose, PanelLeftOpen, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
+import { ArrowLeft, Blocks, Braces, Check, ChevronDown, Clipboard, CloudUpload, Code2, Copy, Eye, FileDown, FileInput, FileText, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Newspaper, Palette, PanelLeftClose, PanelLeftOpen, Printer, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
@@ -36,6 +36,7 @@ import {
 import { parseImageSettings, type ImageSettings } from "./lib/imageSettings";
 import { markdownToPlainText, renderUnstyledMarkdown } from "./lib/exportFormats";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
+import { printHtmlAsPdf } from "./lib/printDocument";
 import { articleThemes, defaultTheme } from "./lib/themes";
 import {
   duplicateTheme,
@@ -773,6 +774,71 @@ function App() {
     setActiveId(id);
   };
 
+  const addImportedDocument = (sourcePath: string, content: string) => {
+    const id = createId();
+    const name = `${fileName(sourcePath).replace(/\.(?:html?|docx)$/i, "") || "导入文章"}.md`;
+    setDocuments((items) => [...items, {
+      id,
+      path: null,
+      name,
+      content,
+      savedContent: "",
+      lineEnding: "lf",
+      hasBom: false,
+      readOnly: false,
+      externalState: "normal",
+    }]);
+    setActiveId(id);
+    setActivePage("workspace");
+  };
+
+  const importHtmlDocument = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        title: "导入 HTML",
+        filters: [{ name: "HTML", extensions: ["html", "htm"] }],
+      });
+      if (!selected || Array.isArray(selected)) return;
+      const { convertHtmlFileToMarkdown, decodeHtmlBytes } = await import("./lib/documentConversion");
+      const result = await convertHtmlFileToMarkdown(
+        decodeHtmlBytes(await readFile(selected)),
+        selected,
+        (path) => invoke<string>("read_image_data_url", { filePath: path }),
+      );
+      if (!result.markdown.trim()) throw new Error("没有识别到可导入的正文内容");
+      addImportedDocument(selected, result.markdown);
+      const warning = result.warnings.length > 0 ? `，有 ${result.warnings.length} 张本地图片未能读取` : "";
+      notify(`HTML 已导入为新的 Markdown 文章${warning}`, result.warnings.length > 0 ? "neutral" : "success");
+    } catch (error) {
+      notify(`导入 HTML 失败：${String(error)}`, "error");
+    }
+  };
+
+  const importDocxDocument = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        title: "导入 Word 文档",
+        filters: [{ name: "Word 文档", extensions: ["docx"] }],
+      });
+      if (!selected || Array.isArray(selected)) return;
+      const { convertDocxToMarkdown } = await import("./lib/documentConversion");
+      const bytes = await readFile(selected);
+      const arrayBuffer = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer;
+      const result = await convertDocxToMarkdown(arrayBuffer);
+      if (!result.markdown.trim()) throw new Error("没有识别到可导入的正文内容");
+      addImportedDocument(selected, result.markdown);
+      const warning = result.warnings.length > 0 ? `，有 ${result.warnings.length} 项格式未完全转换` : "";
+      notify(`DOCX 已导入为新的 Markdown 文章${warning}`, result.warnings.length > 0 ? "neutral" : "success");
+    } catch (error) {
+      notify(`导入 DOCX 失败：${String(error)}`, "error");
+    }
+  };
+
   const createMarkdownInDirectory = async (name: string): Promise<boolean> => {
     if (!newMarkdownRequest) return false;
     const request = newMarkdownRequest;
@@ -1206,6 +1272,27 @@ function App() {
       notify("HTML 已导出", "success");
     } catch (error) {
       notify(`导出失败：${String(error)}`, "error");
+    }
+  };
+
+  const exportPrintPdf = async () => {
+    try {
+      const printRendered = renderMarkdown(
+        active.content,
+        baseTheme,
+        codeTheme,
+        (source) => {
+          const localPath = resolveLocalArticleImagePath(source, active.path);
+          return localPath ? `wenrender-local-image:${encodeURIComponent(localPath)}` : source;
+        },
+        typographyOverrides,
+      );
+      const embedded = await embedWorkspaceLocalImages(printRendered);
+      const title = active.name.replace(/\.(?:md|markdown|mdown|mkd)$/i, "");
+      notify("正在打开系统打印窗口，请选择保存为 PDF", "neutral");
+      await printHtmlAsPdf(wrapHtml(embedded.html, title, baseTheme, typographyOverrides));
+    } catch (error) {
+      notify(`导出 PDF 失败：${String(error)}`, "error");
     }
   };
 
@@ -1770,12 +1857,17 @@ function App() {
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content align="end" className="z-50 min-w-48 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]">
+                  <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-400 dark:text-stone-500">导入</DropdownMenu.Label>
+                  <DropdownMenu.Item onSelect={() => void importHtmlDocument()} className="menu-item"><FileInput size={15} />导入 HTML</DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => void importDocxDocument()} className="menu-item"><FileInput size={15} />导入 DOCX</DropdownMenu.Item>
+                  <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
                   <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-400 dark:text-stone-500">复制</DropdownMenu.Label>
                   <DropdownMenu.Item onSelect={() => void copyMarkdown()} className="menu-item"><Copy size={15} />复制 Markdown</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={() => void copyUnstyledRichText()} className="menu-item"><Clipboard size={15} />复制无样式富文本</DropdownMenu.Item>
                   <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
                   <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-400 dark:text-stone-500">导出</DropdownMenu.Label>
                   <DropdownMenu.Item onSelect={() => void exportHtml()} className="menu-item"><FileDown size={15} />导出 HTML</DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => void exportPrintPdf()} className="menu-item"><Printer size={15} />导出 PDF（打印）</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={() => void exportPlainText()} className="menu-item"><FileText size={15} />导出纯文本</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={() => void saveDocumentAs()} className="menu-item"><Save size={15} />另存为 Markdown</DropdownMenu.Item>
                 </DropdownMenu.Content>

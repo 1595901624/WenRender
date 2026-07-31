@@ -61,5 +61,9 @@ export async function embedLocalImages(html: string): Promise<{ html: string; em
       failedCount += 1;
     }
   }));
-  return { html: document.body.innerHTML, embeddedCount, failedCount };
+  // DOMParser 会把片段开头的 style 自动移入 head；重新拼回可保留高级主题 CSS。
+  const styles = Array.from(document.head.querySelectorAll("style"))
+    .map((style) => style.outerHTML)
+    .join("");
+  return { html: `${styles}${document.body.innerHTML}`, embeddedCount, failedCount };
 }
