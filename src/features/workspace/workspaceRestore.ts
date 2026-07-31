@@ -3,6 +3,7 @@ import { createId, fileName } from "../../lib/path";
 import { hasUnsavedChanges } from "../../lib/document";
 import type { FileSnapshot, OpenDirectory, OpenDocument } from "../../types";
 import type { WorkspaceSession } from "../../lib/workspace";
+import { getArticlePreferences } from "../../lib/articlePreferences";
 
 /**
  * 将持久化的工作区描述还原为运行时数据。
@@ -64,22 +65,24 @@ export async function restoreWorkspaceSession(session: WorkspaceSession): Promis
         recoveredDraft: restoredDraft !== undefined,
         cursorPosition: persisted.cursorPosition,
         directoryId: directory?.id,
-        themeId: persisted.themeId,
-        codeThemeId: persisted.codeThemeId,
-        typographyOverrides: persisted.typographyOverrides,
+        themeId: persisted.themeId ?? document.themeId,
+        codeThemeId: persisted.codeThemeId ?? document.codeThemeId,
+        typographyOverrides: persisted.typographyOverrides ?? document.typographyOverrides,
       });
     } catch {
       // 文件关闭期间被删除时，只要有草稿就仍恢复它，避免用户内容丢失。
       if (persisted.draftContent === undefined) continue;
+      const preferences = getArticlePreferences(persisted.path);
       restoredDocuments.push({
+        ...preferences,
         id, path: persisted.path, name: fileName(persisted.path), content: persisted.draftContent,
         savedContent: "", diskFingerprint: persisted.baseHash ? { size: 0, modifiedMs: 0, hash: persisted.baseHash } : undefined,
         lineEnding: "lf", hasBom: false, readOnly: false, externalState: "deleted", recoveredDraft: true,
         cursorPosition: persisted.cursorPosition,
         directoryId: directory?.id,
-        themeId: persisted.themeId,
-        codeThemeId: persisted.codeThemeId,
-        typographyOverrides: persisted.typographyOverrides,
+        themeId: persisted.themeId ?? preferences.themeId,
+        codeThemeId: persisted.codeThemeId ?? preferences.codeThemeId,
+        typographyOverrides: persisted.typographyOverrides ?? preferences.typographyOverrides,
       });
     }
     if (index === session.activeIndex) restoredActiveId = id;
@@ -91,6 +94,7 @@ export async function restoreWorkspaceSession(session: WorkspaceSession): Promis
 /** 根据 Rust 层读取的快照建立编辑器文档。 */
 export function createDocumentFromSnapshot(id: string, path: string, name: string, snapshot: FileSnapshot): OpenDocument {
   return {
+    ...getArticlePreferences(path),
     id, path, name, content: snapshot.content, savedContent: snapshot.content,
     diskFingerprint: snapshot.fingerprint, lineEnding: snapshot.lineEnding, hasBom: snapshot.hasBom,
     readOnly: snapshot.readOnly, externalState: "normal",

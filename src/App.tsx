@@ -44,10 +44,12 @@ import {
 } from "./lib/customThemes";
 import {
   countTypographyOverrides,
-  parseTypographyOverrides,
   type TypographyOverrides,
-  type TypographyOverridesByTheme,
 } from "./lib/typography";
+import {
+  replaceArticleThemePreference,
+  updateArticlePreferences,
+} from "./lib/articlePreferences";
 import { loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { AppDialogs, type NewMarkdownTarget } from "./features/workspace/AppDialogs";
@@ -152,9 +154,6 @@ function App() {
   );
   const [typographyPanelOpen, setTypographyPanelOpen] = useState(false);
   const [themeEditorOpen, setThemeEditorOpen] = useState(false);
-  const [typographyOverridesByTheme, setTypographyOverridesByTheme] = useState<TypographyOverridesByTheme>(
-    () => parseTypographyOverrides(window.localStorage.getItem("wenrender-typography-overrides")),
-  );
   const [syncScroll, setSyncScroll] = useState(true);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [activePage, setActivePage] = useState<AppPage>("workspace");
@@ -190,6 +189,14 @@ function App() {
       if (cancelled) return;
       setDirectories(restored.directories);
       if (restored.documents.length > 0) {
+        for (const document of restored.documents) {
+          if (!document.path) continue;
+          updateArticlePreferences(document.path, {
+            themeId: document.themeId,
+            codeThemeId: document.codeThemeId,
+            typographyOverrides: document.typographyOverrides,
+          });
+        }
         setDocuments(restored.documents);
         setActiveId(restored.activeId);
       }
@@ -303,10 +310,6 @@ function App() {
   }, [codeThemeId]);
 
   useEffect(() => {
-    window.localStorage.setItem("wenrender-typography-overrides", JSON.stringify(typographyOverridesByTheme));
-  }, [typographyOverridesByTheme]);
-
-  useEffect(() => {
     window.localStorage.setItem("wenrender-image-settings", JSON.stringify(imageSettings));
   }, [imageSettings]);
 
@@ -356,20 +359,8 @@ function App() {
   const selectedCodeThemeId = active.codeThemeId ?? codeThemeId;
   const baseTheme = allThemes.find((item) => item.id === selectedThemeId) ?? defaultTheme;
   const codeTheme = codeThemes.find((item) => item.id === selectedCodeThemeId) ?? defaultCodeTheme;
-  const typographyOverrides = active.typographyOverrides
-    ?? typographyOverridesByTheme[baseTheme.id]
-    ?? {};
+  const typographyOverrides = active.typographyOverrides ?? {};
   const typographyCustomCount = countTypographyOverrides(typographyOverrides);
-  const updateTypographyOverrides = useCallback((overrides: TypographyOverrides) => {
-    setDocuments((items) => items.map((item) => (
-      item.id === activeId ? { ...item, typographyOverrides: overrides } : item
-    )));
-  }, [activeId]);
-  const resetTypographyOverrides = useCallback(() => {
-    setDocuments((items) => items.map((item) => (
-      item.id === activeId ? { ...item, typographyOverrides: {} } : item
-    )));
-  }, [activeId]);
   const rendered = useMemo(
     () => renderMarkdown(
       active.content,
@@ -390,19 +381,49 @@ function App() {
     window.setTimeout(() => setNotice(null), 2200);
   }, []);
 
+  const persistArticlePreference = useCallback((
+    document: OpenDocument | undefined,
+    patch: Parameters<typeof updateArticlePreferences>[1],
+  ) => {
+    if (!document?.path) return;
+    if (!updateArticlePreferences(document.path, patch)) {
+      notify("文章排版配置保存失败，请检查本地存储空间", "error");
+    }
+  }, [notify]);
+
+  const updateTypographyOverrides = useCallback((overrides: TypographyOverrides) => {
+    const document = documentsRef.current.find((item) => item.id === activeId);
+    setDocuments((items) => items.map((item) => (
+      item.id === activeId ? { ...item, typographyOverrides: overrides } : item
+    )));
+    persistArticlePreference(document, { typographyOverrides: overrides });
+  }, [activeId, persistArticlePreference]);
+
+  const resetTypographyOverrides = useCallback(() => {
+    const document = documentsRef.current.find((item) => item.id === activeId);
+    setDocuments((items) => items.map((item) => (
+      item.id === activeId ? { ...item, typographyOverrides: {} } : item
+    )));
+    persistArticlePreference(document, { typographyOverrides: {} });
+  }, [activeId, persistArticlePreference]);
+
   const selectArticleTheme = useCallback((nextThemeId: string) => {
+    const document = documentsRef.current.find((item) => item.id === activeId);
     setThemeId(nextThemeId);
     setDocuments((items) => items.map((item) => (
       item.id === activeId ? { ...item, themeId: nextThemeId } : item
     )));
-  }, [activeId]);
+    persistArticlePreference(document, { themeId: nextThemeId });
+  }, [activeId, persistArticlePreference]);
 
   const selectCodeTheme = useCallback((nextCodeThemeId: string) => {
+    const document = documentsRef.current.find((item) => item.id === activeId);
     setCodeThemeId(nextCodeThemeId);
     setDocuments((items) => items.map((item) => (
       item.id === activeId ? { ...item, codeThemeId: nextCodeThemeId } : item
     )));
-  }, [activeId]);
+    persistArticlePreference(document, { codeThemeId: nextCodeThemeId });
+  }, [activeId, persistArticlePreference]);
 
   const storeCustomThemes = useCallback((themes: typeof customThemes) => {
     setCustomThemes(themes);
@@ -472,10 +493,16 @@ function App() {
     }
     const next = customThemes.filter((item) => item.id !== baseTheme.id);
     storeCustomThemes(next);
-    selectArticleTheme(defaultTheme.id);
+    setThemeId(defaultTheme.id);
+    setDocuments((items) => items.map((item) => (
+      item.themeId === baseTheme.id ? { ...item, themeId: defaultTheme.id } : item
+    )));
+    if (!replaceArticleThemePreference(baseTheme.id, defaultTheme.id)) {
+      notify("部分文章的主题配置更新失败", "error");
+    }
     setThemeEditorOpen(false);
     notify(`已删除「${baseTheme.name}」`, "success");
-  }, [baseTheme, customThemes, notify, selectArticleTheme, storeCustomThemes]);
+  }, [baseTheme, customThemes, notify, storeCustomThemes]);
 
   const saveContentBlock = useCallback((draft: ContentBlockDraft) => {
     const existing = draft.id ? contentBlocks.find((item) => item.id === draft.id) : undefined;
@@ -941,6 +968,14 @@ function App() {
         : item);
       documentsRef.current = updatedDocuments;
       setDocuments(updatedDocuments);
+      const updatedDocument = updatedDocuments.find((item) => item.id === document.id);
+      if (updatedDocument?.path) {
+        updateArticlePreferences(updatedDocument.path, {
+          themeId: updatedDocument.themeId,
+          codeThemeId: updatedDocument.codeThemeId,
+          typographyOverrides: updatedDocument.typographyOverrides,
+        });
+      }
       setSaveConflict(null);
       notify("文章已保存", "success");
       return "saved";

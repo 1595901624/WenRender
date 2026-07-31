@@ -77,7 +77,7 @@ export function TypographyPanel({ theme, overrides, onChange, onReset, onClose }
                 {theme.name}
                 {customCount > 0 && <span className="text-stone-400"> · 已自定义 {customCount} 项</span>}
               </div>
-              <div className="mt-1 text-[11px] leading-4 text-stone-400">应用到所有使用此主题的文章</div>
+              <div className="mt-1 text-[11px] leading-4 text-stone-400">基于此主题调整，仅影响当前文章</div>
             </div>
             <button
               type="button"
