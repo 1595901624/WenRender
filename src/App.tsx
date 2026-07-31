@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ArrowLeft, Blocks, Check, ChevronDown, Clipboard, CloudUpload, Code2, Copy, Eye, FileDown, FileInput, FileText, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Newspaper, Palette, PanelLeftClose, PanelLeftOpen, Printer, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
+import { ArrowLeft, Blocks, Check, ChevronDown, Clipboard, CloudUpload, Code2, Copy, Eye, FileDown, FileInput, FileText, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Moon, Newspaper, Palette, PanelLeftClose, PanelLeftOpen, Printer, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Sun, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
@@ -20,7 +20,7 @@ import {
   WorkspaceSearchSidebar,
   type WorkspaceSearchTarget,
 } from "./components/WorkspaceSearchSidebar";
-import { Preview, type PreviewHandle, type PreviewMode } from "./components/Preview";
+import { Preview, type PreviewColorScheme, type PreviewHandle, type PreviewMode } from "./components/Preview";
 import { TypographyPanel } from "./components/TypographyPanel";
 import { ThemeEditorPanel } from "./components/ThemeEditorPanel";
 import { TitleBar } from "./components/TitleBar";
@@ -172,6 +172,9 @@ function App() {
   const [viewMode, setViewMode] = useState<"split" | "editor" | "preview">("split");
   const [previewMode, setPreviewMode] = useState<PreviewMode>(() => (
     window.localStorage.getItem("wenrender-preview-mode") === "phone" ? "phone" : "web"
+  ));
+  const [previewColorScheme, setPreviewColorScheme] = useState<PreviewColorScheme>(() => (
+    window.localStorage.getItem("wenrender-preview-color-scheme") === "dark" ? "dark" : "light"
   ));
   const [notice, setNotice] = useState<Notice>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -387,6 +390,10 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem("wenrender-preview-mode", previewMode);
   }, [previewMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem("wenrender-preview-color-scheme", previewColorScheme);
+  }, [previewColorScheme]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -2043,7 +2050,8 @@ function App() {
               <section className={clsx("min-w-0", effectiveViewMode === "split" ? "w-1/2" : "w-full")}>
                 <div className="flex h-10 items-center justify-between border-b border-stone-200 bg-[#f8f9f6] px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-stone-400 dark:border-stone-700 dark:bg-[#1d1e1b]">
                   <span>预览</span>
-                  <div className="flex rounded-lg bg-stone-200/70 p-0.5 normal-case tracking-normal dark:bg-stone-800">
+                  <div className="flex items-center gap-1.5 normal-case tracking-normal">
+                    <div className="flex rounded-lg bg-stone-200/70 p-0.5 dark:bg-stone-800">
                     {([
                       ["web", Monitor, "网页"],
                       ["phone", Smartphone, "手机"],
@@ -2065,6 +2073,30 @@ function App() {
                         {label}
                       </button>
                     ))}
+                    </div>
+                    <div className="flex rounded-lg bg-stone-200/70 p-0.5 dark:bg-stone-800">
+                      {([
+                        ["light", Sun, "亮色"],
+                        ["dark", Moon, "暗黑"],
+                      ] as const).map(([scheme, Icon, label]) => (
+                        <button
+                          key={scheme}
+                          type="button"
+                          aria-pressed={previewColorScheme === scheme}
+                          title={`${label}预览`}
+                          onClick={() => setPreviewColorScheme(scheme)}
+                          className={clsx(
+                            "inline-flex h-6 items-center gap-1 rounded-md px-2 text-[10px] font-medium transition",
+                            previewColorScheme === scheme
+                              ? "bg-white text-stone-800 shadow-sm dark:bg-stone-700 dark:text-stone-100"
+                              : "text-stone-500 hover:text-stone-700 dark:text-stone-400 dark:hover:text-stone-200",
+                          )}
+                        >
+                          <Icon size={12} />
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 <div className="h-[calc(100%-40px)]">
@@ -2072,6 +2104,7 @@ function App() {
                     ref={previewRef}
                     html={fullHtml}
                     mode={previewMode}
+                    colorScheme={previewColorScheme}
                     onScrollRatio={(ratio) => { if (syncScroll) editorRef.current?.scrollToRatio(ratio); }}
                   />
                 </div>
