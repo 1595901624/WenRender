@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ArrowLeft, Blocks, Braces, Check, ChevronDown, Clipboard, CloudUpload, Code2, Eye, FileDown, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Palette, PanelLeftClose, PanelLeftOpen, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
+import { ArrowLeft, Blocks, Braces, Check, ChevronDown, Clipboard, CloudUpload, Code2, Eye, FileDown, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Newspaper, Palette, PanelLeftClose, PanelLeftOpen, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
@@ -71,6 +71,12 @@ import {
   uploadArticleLocalImages,
   uploadImageFile,
 } from "./features/images/imageHosting";
+import { WechatDraftDialog } from "./features/wechat/WechatDraftDialog";
+import {
+  loadWechatAccounts,
+  removeFirstMarkdownHeading,
+  saveWechatAccounts,
+} from "./lib/wechat";
 import type {
   ArticleImageInput,
   DirectoryNode,
@@ -168,6 +174,9 @@ function App() {
   const [imageSettings, setImageSettings] = useState<ImageSettings>(() => (
     parseImageSettings(window.localStorage.getItem("wenrender-image-settings"))
   ));
+  const [wechatAccounts, setWechatAccounts] = useState(loadWechatAccounts);
+  const [wechatDraftOpen, setWechatDraftOpen] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState<"general" | "wechat">("general");
   const [darkInterface, setDarkInterface] = useState(() => document.documentElement.classList.contains("dark"));
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
@@ -318,6 +327,10 @@ function App() {
   }, [imageSettings]);
 
   useEffect(() => {
+    saveWechatAccounts(wechatAccounts);
+  }, [wechatAccounts]);
+
+  useEffect(() => {
     window.localStorage.setItem("wenrender-sidebar-open", String(sidebarOpen));
   }, [sidebarOpen]);
 
@@ -379,6 +392,19 @@ function App() {
     () => wrapHtml(rendered, active.name.replace(/\.md$/i, ""), baseTheme, typographyOverrides),
     [rendered, active.name, baseTheme, typographyOverrides],
   );
+  const renderWechatContent = useCallback((removeFirstHeading: boolean) => {
+    const source = removeFirstHeading ? removeFirstMarkdownHeading(active.content) : active.content;
+    return renderMarkdown(
+      source,
+      baseTheme,
+      codeTheme,
+      (imageSource) => {
+        const localPath = resolveLocalArticleImagePath(imageSource, active.path);
+        return localPath ? `wenrender-local-image:${encodeURIComponent(localPath)}` : imageSource;
+      },
+      typographyOverrides,
+    );
+  }, [active.content, active.path, baseTheme, codeTheme, typographyOverrides]);
 
   const notify = useCallback((message: string, tone: NonNullable<Notice>["tone"] = "neutral") => {
     setNotice({ message, tone });
@@ -1350,7 +1376,10 @@ function App() {
           <div className="flex items-center justify-end gap-1">
             {/* <ToolbarButton label="打开文件" onClick={openDocument}><FolderOpen size={17} /></ToolbarButton> */}
             <ToolbarButton label="保存" onClick={saveDocument}><Save size={17} /></ToolbarButton>
-            <ToolbarButton label="设置" onClick={() => setActivePage("settings")}><Settings size={17} /></ToolbarButton>
+            <ToolbarButton label="设置" onClick={() => {
+              setSettingsInitialSection("general");
+              setActivePage("settings");
+            }}><Settings size={17} /></ToolbarButton>
             <div className="mx-1 h-5 w-px bg-stone-200 dark:bg-stone-700" />
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
@@ -1540,9 +1569,11 @@ function App() {
               <Clipboard size={16} />复制到公众号
             </button>
             <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild><button className="icon-button"><ChevronDown size={16} /></button></DropdownMenu.Trigger>
+              <DropdownMenu.Trigger asChild><button className="icon-button" aria-label="更多发布操作"><ChevronDown size={16} /></button></DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content align="end" className="z-50 min-w-44 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]">
+                  <DropdownMenu.Item onSelect={() => setWechatDraftOpen(true)} className="menu-item"><Newspaper size={15} />同步到公众号草稿箱</DropdownMenu.Item>
+                  <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
                   <DropdownMenu.Item onSelect={() => void uploadCurrentArticleImages()} className="menu-item"><CloudUpload size={15} />上传文章图片</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={exportHtml} className="menu-item"><FileDown size={15} />导出 HTML</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={saveDocumentAs} className="menu-item"><Save size={15} />另存为 Markdown</DropdownMenu.Item>
@@ -1557,11 +1588,15 @@ function App() {
 
         {activePage === "settings" ? (
           <SettingsPage
+            key={settingsInitialSection}
             colorScheme={colorScheme}
             onColorSchemeChange={setColorScheme}
             imageSettings={imageSettings}
             onImageSettingsChange={setImageSettings}
             onChooseImageStorageDirectory={chooseImageStorageDirectory}
+            wechatAccounts={wechatAccounts}
+            onWechatAccountsChange={setWechatAccounts}
+            initialSection={settingsInitialSection}
           />
         ) : (
         <main className="relative flex min-h-0 flex-1">
@@ -1666,6 +1701,24 @@ function App() {
         )}
         </div>
         </div>
+
+        {wechatDraftOpen && (
+          <WechatDraftDialog
+            key={`${active.id}:${active.path ?? "unsaved"}`}
+            accounts={wechatAccounts}
+            documentPath={active.path}
+            documentName={active.name}
+            markdown={active.content}
+            renderContent={renderWechatContent}
+            onClose={() => setWechatDraftOpen(false)}
+            onOpenSettings={() => {
+              setWechatDraftOpen(false);
+              setSettingsInitialSection("wechat");
+              setActivePage("settings");
+            }}
+            onSynced={(message) => notify(message, "success")}
+          />
+        )}
 
         <AppDialogs
           pendingClose={pendingClose}

@@ -8,9 +8,11 @@ use std::{
 };
 
 use commands::{
-    create_markdown_file, delete_image_host_secrets, get_image_host_secret_status,
-    inspect_text_file, read_file_snapshot, read_image_data_url, read_text_file, save_article_image,
-    save_image_host_secrets, save_text_file_safely, scan_directory, upload_image_to_host,
+    create_markdown_file, delete_image_host_secrets, delete_wechat_account_secret,
+    get_image_host_secret_status, get_wechat_account_secret_status, inspect_text_file,
+    read_file_snapshot, read_image_data_url, read_text_file, save_article_image,
+    save_image_host_secrets, save_text_file_safely, save_wechat_account_secret, scan_directory,
+    sync_wechat_draft, test_wechat_account, upload_image_to_host,
 };
 use tauri::{Emitter, Manager};
 
@@ -108,6 +110,11 @@ pub fn run() {
             get_image_host_secret_status,
             delete_image_host_secrets,
             upload_image_to_host,
+            save_wechat_account_secret,
+            get_wechat_account_secret_status,
+            delete_wechat_account_secret,
+            test_wechat_account,
+            sync_wechat_draft,
             take_pending_open_files
         ])
         .on_window_event(|window, event| {

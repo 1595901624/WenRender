@@ -3,7 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
-import { Check, Cloud, ExternalLink, FolderOpen, Github, Image as ImageIcon, Info, KeyRound, Monitor, Moon, Settings, ShieldCheck, Sun, Trash2 } from "lucide-react";
+import { Check, Cloud, ExternalLink, FolderOpen, Github, Image as ImageIcon, Info, KeyRound, Monitor, Moon, Newspaper, Pencil, Plus, RefreshCw, Settings, ShieldCheck, Sun, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import appLogoUrl from "../../../app-logo-radius.webp";
 import {
@@ -12,9 +12,10 @@ import {
   type ImageHostProvider,
   type ImageSettings,
 } from "../../lib/imageSettings";
+import type { WechatAccount } from "../../lib/wechat";
 
 type AppColorScheme = "system" | "light" | "dark";
-type SettingsSection = "general" | "images" | "about";
+type SettingsSection = "general" | "images" | "wechat" | "about";
 
 /**
  * 设置页按分类独立维护，避免新增软件选项时继续扩张应用入口。
@@ -26,14 +27,20 @@ export function SettingsPage({
   imageSettings,
   onImageSettingsChange,
   onChooseImageStorageDirectory,
+  wechatAccounts,
+  onWechatAccountsChange,
+  initialSection = "general",
 }: {
   colorScheme: AppColorScheme;
   onColorSchemeChange: (value: AppColorScheme) => void;
   imageSettings: ImageSettings;
   onImageSettingsChange: (value: ImageSettings) => void;
   onChooseImageStorageDirectory: () => void;
+  wechatAccounts: WechatAccount[];
+  onWechatAccountsChange: (value: WechatAccount[]) => void;
+  initialSection?: SettingsSection;
 }) {
-  const [section, setSection] = useState<SettingsSection>("general");
+  const [section, setSection] = useState<SettingsSection>(initialSection);
 
   return (
     <main className="flex min-h-0 flex-1 bg-[#f8f8f6] dark:bg-[#1b1c19]">
@@ -44,6 +51,7 @@ export function SettingsPage({
           {([
             ["general", Settings, "通用"],
             ["images", ImageIcon, "图片"],
+            ["wechat", Newspaper, "公众号"],
             ["about", Info, "关于"],
           ] as const).map(([value, Icon, label]) => (
             <button
@@ -73,6 +81,12 @@ export function SettingsPage({
               settings={imageSettings}
               onChange={onImageSettingsChange}
               onChooseDirectory={onChooseImageStorageDirectory}
+            />
+          )}
+          {section === "wechat" && (
+            <WechatAccountSettings
+              accounts={wechatAccounts}
+              onChange={onWechatAccountsChange}
             />
           )}
           {section === "about" && <AboutSettings />}
@@ -576,6 +590,278 @@ function ImageHostingSettings({
   );
 }
 
+type WechatSecretState = "checking" | "saved" | "missing" | "error";
+
+function WechatAccountSettings({
+  accounts,
+  onChange,
+}: {
+  accounts: WechatAccount[];
+  onChange: (value: WechatAccount[]) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [appId, setAppId] = useState("");
+  const [defaultAuthor, setDefaultAuthor] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+  const [secretStates, setSecretStates] = useState<Record<string, WechatSecretState>>({});
+  const [message, setMessage] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const editing = editingId !== null;
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      setSecretStates(Object.fromEntries(accounts.map((account) => [account.id, "error"])));
+      return;
+    }
+    let cancelled = false;
+    setSecretStates((current) => Object.fromEntries(
+      accounts.map((account) => [account.id, current[account.id] ?? "checking"]),
+    ));
+    void Promise.all(accounts.map(async (account) => {
+      try {
+        const saved = await invoke<boolean>("get_wechat_account_secret_status", {
+          accountId: account.id,
+        });
+        return [account.id, saved ? "saved" : "missing"] as const;
+      } catch {
+        return [account.id, "error"] as const;
+      }
+    })).then((entries) => {
+      if (!cancelled) setSecretStates(Object.fromEntries(entries));
+    });
+    return () => { cancelled = true; };
+  }, [accounts]);
+
+  const startNew = () => {
+    setEditingId(createWechatAccountId());
+    setName("");
+    setAppId("");
+    setDefaultAuthor("");
+    setAppSecret("");
+    setMessage("");
+  };
+
+  const startEdit = (account: WechatAccount) => {
+    setEditingId(account.id);
+    setName(account.name);
+    setAppId(account.appId);
+    setDefaultAuthor(account.defaultAuthor);
+    setAppSecret("");
+    setMessage("");
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setAppSecret("");
+    setMessage("");
+  };
+
+  const saveAccount = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingId || busyId) return;
+    if (!name.trim() || !appId.trim()) {
+      setMessage("请填写公众号名称和 AppID");
+      return;
+    }
+    const exists = accounts.some((account) => account.id === editingId);
+    if (!exists && !appSecret.trim()) {
+      setMessage("首次绑定需要填写 AppSecret");
+      return;
+    }
+    setBusyId(editingId);
+    setMessage("");
+    try {
+      if (appSecret.trim()) {
+        if (!("__TAURI_INTERNALS__" in window)) {
+          throw new Error("系统密钥库仅在桌面应用中可用");
+        }
+        await invoke("save_wechat_account_secret", {
+          accountId: editingId,
+          appSecret,
+        });
+      }
+      const account: WechatAccount = {
+        id: editingId,
+        name: name.trim(),
+        appId: appId.trim(),
+        defaultAuthor: defaultAuthor.trim(),
+      };
+      onChange(exists
+        ? accounts.map((item) => item.id === editingId ? account : item)
+        : [...accounts, account]);
+      setSecretStates((current) => ({
+        ...current,
+        [editingId]: appSecret.trim() ? "saved" : current[editingId] ?? "missing",
+      }));
+      setEditingId(null);
+      setAppSecret("");
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const testAccount = async (account: WechatAccount) => {
+    if (busyId) return;
+    setBusyId(account.id);
+    setMessage("");
+    try {
+      const result = await invoke<{ expiresIn: number }>("test_wechat_account", {
+        accountId: account.id,
+        appId: account.appId,
+      });
+      setMessage(`「${account.name}」连接成功，凭据有效期约 ${Math.round(result.expiresIn / 60)} 分钟`);
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const deleteAccount = async (account: WechatAccount) => {
+    if (!window.confirm(`确定删除公众号「${account.name}」及其本机凭据吗？文章中的草稿关联不会删除。`)) return;
+    setBusyId(account.id);
+    setMessage("");
+    try {
+      if ("__TAURI_INTERNALS__" in window) {
+        await invoke("delete_wechat_account_secret", { accountId: account.id });
+      }
+      onChange(accounts.filter((item) => item.id !== account.id));
+      if (editingId === account.id) cancelEdit();
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="mx-auto w-full max-w-3xl px-10 py-9">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <h1 className="text-xl font-semibold text-stone-900 dark:text-stone-100">公众号设置</h1>
+          <p className="mt-1.5 text-sm text-stone-500 dark:text-stone-400">
+            绑定一个或多个公众号，把当前文章创建或更新到草稿箱。
+          </p>
+        </div>
+        {!editing && (
+          <button
+            type="button"
+            onClick={startNew}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 text-sm font-medium text-stone-700 transition hover:bg-stone-100 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700"
+          >
+            <Plus size={15} />添加公众号
+          </button>
+        )}
+      </div>
+
+      <section className="mt-8 rounded-xl border border-stone-200 bg-white px-5 py-4 dark:border-stone-700 dark:bg-[#242522]">
+        <div className="flex items-start gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300">
+            <ShieldCheck size={17} />
+          </span>
+          <div>
+            <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">连接前准备</div>
+            <p className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">
+              在微信公众平台获取 AppID 和 AppSecret，并把当前电脑的公网 IP 加入 API IP 白名单。
+              AppSecret 仅写入系统密钥库，不会保存在普通设置或 Markdown 文件中。账号还需要具有草稿箱与素材接口权限。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {editing && (
+        <form onSubmit={(event) => void saveAccount(event)} className="mt-4 overflow-hidden rounded-xl border border-stone-300 bg-white dark:border-stone-600 dark:bg-[#242522]">
+          <div className="border-b border-stone-200 px-5 py-4 dark:border-stone-700">
+            <div className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+              {accounts.some((account) => account.id === editingId) ? "编辑公众号" : "绑定公众号"}
+            </div>
+            <div className="mt-1 text-xs text-stone-400">公众号名称仅用于在文染中识别账号。</div>
+          </div>
+          <div className="grid grid-cols-2 gap-4 px-5 py-5">
+            <SettingField label="公众号名称">
+              <input className="settings-input" value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：文染" autoFocus />
+            </SettingField>
+            <SettingField label="默认作者" hint="创建文章时自动带入，可逐篇修改">
+              <input className="settings-input" value={defaultAuthor} onChange={(event) => setDefaultAuthor(event.target.value)} placeholder="作者名称" />
+            </SettingField>
+            <SettingField label="AppID">
+              <input className="settings-input font-mono" value={appId} onChange={(event) => setAppId(event.target.value)} placeholder="wx..." spellCheck={false} />
+            </SettingField>
+            <SettingField
+              label="AppSecret"
+              hint={accounts.some((account) => account.id === editingId) ? "留空表示继续使用系统密钥库中的值" : "首次绑定必须填写"}
+            >
+              <input className="settings-input font-mono" type="password" value={appSecret} onChange={(event) => setAppSecret(event.target.value)} placeholder="不会以明文保存在设置中" autoComplete="new-password" />
+            </SettingField>
+          </div>
+          <div className="flex items-center justify-between gap-4 border-t border-stone-100 px-5 py-3 dark:border-stone-700">
+            <span className="text-xs text-red-600 dark:text-red-400">{message}</span>
+            <div className="flex gap-2">
+              <button type="button" onClick={cancelEdit} disabled={Boolean(busyId)} className="rounded-lg px-3 py-2 text-xs font-medium text-stone-600 hover:bg-stone-100 disabled:opacity-60 dark:text-stone-300 dark:hover:bg-stone-800">取消</button>
+              <button type="submit" disabled={Boolean(busyId)} className="rounded-lg bg-[#20211f] px-3.5 py-2 text-xs font-medium text-white hover:bg-black disabled:opacity-60">
+                {busyId ? "正在保存…" : "保存账号"}
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
+
+      <section className="mt-4 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
+        {accounts.length === 0 ? (
+          <div className="px-5 py-10 text-center">
+            <Newspaper size={24} className="mx-auto text-stone-300 dark:text-stone-600" />
+            <div className="mt-3 text-sm font-medium text-stone-700 dark:text-stone-300">还没有绑定公众号</div>
+            <div className="mt-1 text-xs text-stone-400">绑定后可在文章菜单中同步到草稿箱。</div>
+          </div>
+        ) : (
+          <div className="divide-y divide-stone-100 dark:divide-stone-700">
+            {accounts.map((account) => {
+              const secretState = secretStates[account.id] ?? "checking";
+              return (
+                <div key={account.id} className="flex items-center gap-4 px-5 py-4">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300">
+                    <Newspaper size={18} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-stone-900 dark:text-stone-100">{account.name}</span>
+                      <span className={clsx(
+                        "rounded-full px-2 py-0.5 text-[10px]",
+                        secretState === "saved"
+                          ? "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300"
+                          : "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+                      )}>
+                        {secretState === "checking" ? "检查凭据"
+                          : secretState === "saved" ? "凭据已保存"
+                            : secretState === "error" ? "桌面端可用" : "缺少 AppSecret"}
+                      </span>
+                    </div>
+                    <div className="mt-1 truncate font-mono text-xs text-stone-400">{account.appId}</div>
+                  </div>
+                  <button type="button" disabled={Boolean(busyId)} onClick={() => void testAccount(account)} className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-xs font-medium text-stone-600 hover:bg-stone-100 disabled:opacity-50 dark:text-stone-300 dark:hover:bg-stone-800">
+                    <RefreshCw size={13} className={busyId === account.id ? "animate-spin" : ""} />测试
+                  </button>
+                  <button type="button" disabled={Boolean(busyId)} onClick={() => startEdit(account)} className="icon-button" aria-label={`编辑 ${account.name}`}><Pencil size={14} /></button>
+                  <button type="button" disabled={Boolean(busyId)} onClick={() => void deleteAccount(account)} className="icon-button text-red-500" aria-label={`删除 ${account.name}`}><Trash2 size={14} /></button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {!editing && message && (
+        <p className={clsx("mt-3 text-xs", message.includes("成功") ? "text-stone-600 dark:text-stone-300" : "text-red-600 dark:text-red-400")}>
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function SettingField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
@@ -584,6 +870,10 @@ function SettingField({ label, hint, children }: { label: string; hint?: string;
       <span className="mt-2 block">{children}</span>
     </label>
   );
+}
+
+function createWechatAccountId(): string {
+  return `account_${crypto.randomUUID().replace(/-/g, "")}`;
 }
 
 function providerLabel(provider: ImageHostProvider): string {

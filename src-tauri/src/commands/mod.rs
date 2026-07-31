@@ -1,6 +1,7 @@
 mod directory;
 mod file;
 mod image_host;
+mod wechat;
 
 pub(crate) use directory::scan_directory;
 pub(crate) use file::{
@@ -10,4 +11,8 @@ pub(crate) use file::{
 pub(crate) use image_host::{
     delete_image_host_secrets, get_image_host_secret_status, save_image_host_secrets,
     upload_image_to_host,
+};
+pub(crate) use wechat::{
+    delete_wechat_account_secret, get_wechat_account_secret_status, save_wechat_account_secret,
+    sync_wechat_draft, test_wechat_account,
 };
