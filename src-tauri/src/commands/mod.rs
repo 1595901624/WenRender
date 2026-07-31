@@ -1,8 +1,13 @@
 mod directory;
 mod file;
+mod image_host;
 
 pub(crate) use directory::scan_directory;
 pub(crate) use file::{
-    create_markdown_file, inspect_text_file, read_file_snapshot, read_image_data_url, read_text_file,
-    save_article_image, save_text_file_safely,
+    create_markdown_file, inspect_text_file, read_file_snapshot, read_image_data_url,
+    read_text_file, save_article_image, save_text_file_safely,
+};
+pub(crate) use image_host::{
+    delete_image_host_secrets, get_image_host_secret_status, save_image_host_secrets,
+    upload_image_to_host,
 };

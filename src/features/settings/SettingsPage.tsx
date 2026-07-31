@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import * as ScrollArea from "@radix-ui/react-scroll-area";
-import { Check, ExternalLink, FolderOpen, Github, Image as ImageIcon, Info, Monitor, Moon, Settings, Sun } from "lucide-react";
+import { Check, Cloud, ExternalLink, FolderOpen, Github, Image as ImageIcon, Info, KeyRound, Monitor, Moon, Settings, ShieldCheck, Sun, Trash2 } from "lucide-react";
 import clsx from "clsx";
 import appLogoUrl from "../../../app-logo-radius.webp";
-import { defaultImageSettings, type ImageSettings } from "../../lib/imageSettings";
+import {
+  defaultImageSettings,
+  type ImageHostConfig,
+  type ImageHostProvider,
+  type ImageSettings,
+} from "../../lib/imageSettings";
 
 type AppColorScheme = "system" | "light" | "dark";
 type SettingsSection = "general" | "images" | "about";
@@ -151,7 +157,7 @@ function ImageSettingsPage({
       <div>
         <h1 className="text-xl font-semibold text-stone-900 dark:text-stone-100">图片设置</h1>
         <p className="mt-1.5 text-sm text-stone-500 dark:text-stone-400">
-          管理粘贴或拖入文章的本地图片，包括存放目录、尺寸和压缩质量。
+          管理图片的本地存放、压缩和图床上传。
         </p>
       </div>
 
@@ -313,8 +319,293 @@ function ImageSettingsPage({
           </button>
         </div>
       </section>
+
+      <ImageHostingSettings
+        config={settings.hosting}
+        onChange={(hosting) => onChange({ ...settings, hosting })}
+      />
     </div>
   );
+}
+
+function ImageHostingSettings({
+  config,
+  onChange,
+}: {
+  config: ImageHostConfig;
+  onChange: (value: ImageHostConfig) => void;
+}) {
+  const [accessKeyId, setAccessKeyId] = useState("");
+  const [secretAccessKey, setSecretAccessKey] = useState("");
+  const [sessionToken, setSessionToken] = useState("");
+  const [githubToken, setGithubToken] = useState("");
+  const [customHeaders, setCustomHeaders] = useState('{\n  "Authorization": "Bearer token"\n}');
+  const [secretStatus, setSecretStatus] = useState<"checking" | "saved" | "missing" | "error">("missing");
+  const [secretMessage, setSecretMessage] = useState("");
+  const provider = config.provider;
+  const objectProvider = provider === "s3" || provider === "oss" || provider === "cos" || provider === "r2";
+
+  useEffect(() => {
+    setSecretMessage("");
+    if (provider === "none") {
+      setSecretStatus("missing");
+      return;
+    }
+    if (!("__TAURI_INTERNALS__" in window)) {
+      setSecretStatus("error");
+      setSecretMessage("系统密钥库仅在桌面应用中可用");
+      return;
+    }
+    let cancelled = false;
+    setSecretStatus("checking");
+    void invoke<boolean>("get_image_host_secret_status", { provider })
+      .then((saved) => {
+        if (!cancelled) setSecretStatus(saved ? "saved" : "missing");
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSecretStatus("error");
+          setSecretMessage(String(error));
+        }
+      });
+    return () => { cancelled = true; };
+  }, [provider]);
+
+  const saveSecrets = async () => {
+    try {
+      let value: object;
+      if (objectProvider) {
+        if (!accessKeyId.trim() || !secretAccessKey.trim()) throw new Error("请填写 Access Key ID 和 Secret Access Key");
+        value = {
+          accessKeyId: accessKeyId.trim(),
+          secretAccessKey,
+          sessionToken: sessionToken.trim(),
+        };
+      } else if (provider === "github") {
+        if (!githubToken.trim()) throw new Error("请填写 GitHub Token");
+        value = { token: githubToken.trim() };
+      } else if (provider === "custom") {
+        const headers = JSON.parse(customHeaders);
+        if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+          throw new Error("请求头必须是 JSON 对象");
+        }
+        value = { headers };
+      } else {
+        throw new Error("请先选择图床");
+      }
+      await invoke("save_image_host_secrets", {
+        provider,
+        secretsJson: JSON.stringify(value),
+      });
+      setAccessKeyId("");
+      setSecretAccessKey("");
+      setSessionToken("");
+      setGithubToken("");
+      setSecretStatus("saved");
+      setSecretMessage("凭据已写入系统密钥库");
+    } catch (error) {
+      setSecretStatus("error");
+      setSecretMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const deleteSecrets = async () => {
+    if (!window.confirm(`确定从系统密钥库删除 ${providerLabel(provider)} 凭据吗？`)) return;
+    try {
+      await invoke("delete_image_host_secrets", { provider });
+      setSecretStatus("missing");
+      setSecretMessage("凭据已删除");
+    } catch (error) {
+      setSecretStatus("error");
+      setSecretMessage(String(error));
+    }
+  };
+
+  const update = (patch: Partial<ImageHostConfig>) => onChange({ ...config, ...patch });
+
+  return (
+    <section className="mt-4 overflow-hidden rounded-xl border border-stone-200 bg-white dark:border-stone-700 dark:bg-[#242522]">
+      <div className="border-b border-stone-200 px-5 py-4 dark:border-stone-700">
+        <div className="flex items-center gap-2 text-sm font-semibold text-stone-900 dark:text-stone-100">
+          <Cloud size={16} />图床
+        </div>
+        <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">
+          图片始终先保存到本地，再按策略上传。Endpoint、Bucket 等普通配置保存在本地；密钥和鉴权请求头只保存在系统密钥库。
+        </div>
+      </div>
+
+      <div className="space-y-5 px-5 py-5">
+        <SettingField label="图床类型">
+          <select value={provider} onChange={(event) => update({ provider: event.target.value as ImageHostProvider })} className="settings-input">
+            <option value="none">不使用图床</option>
+            <option value="s3">Amazon S3 / S3 兼容存储</option>
+            <option value="oss">阿里云 OSS</option>
+            <option value="cos">腾讯云 COS</option>
+            <option value="r2">Cloudflare R2</option>
+            <option value="github">GitHub 仓库</option>
+            <option value="custom">自定义上传接口</option>
+          </select>
+        </SettingField>
+
+        {provider !== "none" && (
+          <>
+            <SettingField label="上传时机" hint="推荐复制前上传：写作过程保持本地可靠，发布时再替换为远程地址。">
+              <select value={config.uploadTiming} onChange={(event) => update({ uploadTiming: event.target.value as ImageHostConfig["uploadTiming"] })} className="settings-input">
+                <option value="manual">仅手动上传</option>
+                <option value="on-copy">复制到公众号前上传（推荐）</option>
+                <option value="on-insert">图片插入后立即上传</option>
+              </select>
+            </SettingField>
+            <p className="rounded-lg bg-stone-50 px-3 py-2 text-[11px] leading-5 text-stone-500 dark:bg-stone-800/50 dark:text-stone-400">
+              上传成功后会把 Markdown 中对应的本地图片地址替换为远程 URL，因此文章会进入未保存状态；本地原图不会删除。
+            </p>
+
+            {objectProvider && (
+              <div className="grid grid-cols-2 gap-4">
+                <SettingField label="Endpoint" hint={providerEndpointHint(provider)}>
+                  <input value={config.endpoint} onChange={(event) => update({ endpoint: event.target.value })} placeholder={providerEndpointPlaceholder(provider)} className="settings-input" />
+                </SettingField>
+                <SettingField label="Region">
+                  <input value={config.region} onChange={(event) => update({ region: event.target.value })} placeholder={providerRegionPlaceholder(provider)} className="settings-input" />
+                </SettingField>
+                <SettingField label="Bucket">
+                  <input value={config.bucket} onChange={(event) => update({ bucket: event.target.value })} placeholder="my-image-bucket" className="settings-input" />
+                </SettingField>
+                <SettingField label="远端目录">
+                  <input value={config.pathPrefix} onChange={(event) => update({ pathPrefix: event.target.value })} placeholder="wenrender" className="settings-input" />
+                </SettingField>
+                <div className="col-span-2">
+                  <SettingField label="公开访问域名" hint="应是微信能够直接访问的 HTTPS 地址，可填写存储桶公开域名或 CDN 域名。">
+                    <input value={config.publicBaseUrl} onChange={(event) => update({ publicBaseUrl: event.target.value })} placeholder="https://images.example.com" className="settings-input" />
+                  </SettingField>
+                </div>
+              </div>
+            )}
+
+            {provider === "github" && (
+              <div className="grid grid-cols-2 gap-4">
+                <SettingField label="仓库所有者"><input value={config.githubOwner} onChange={(event) => update({ githubOwner: event.target.value })} placeholder="owner" className="settings-input" /></SettingField>
+                <SettingField label="仓库名称"><input value={config.githubRepo} onChange={(event) => update({ githubRepo: event.target.value })} placeholder="images" className="settings-input" /></SettingField>
+                <SettingField label="分支"><input value={config.githubBranch} onChange={(event) => update({ githubBranch: event.target.value })} placeholder="main" className="settings-input" /></SettingField>
+                <SettingField label="远端目录"><input value={config.pathPrefix} onChange={(event) => update({ pathPrefix: event.target.value })} placeholder="wenrender" className="settings-input" /></SettingField>
+                <div className="col-span-2">
+                  <SettingField label="自定义 CDN 域名（可选）" hint="留空时使用 raw.githubusercontent.com；仓库必须公开，或配置可公开访问的 CDN。">
+                    <input value={config.publicBaseUrl} onChange={(event) => update({ publicBaseUrl: event.target.value })} placeholder="https://cdn.example.com/images" className="settings-input" />
+                  </SettingField>
+                </div>
+              </div>
+            )}
+
+            {provider === "custom" && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <SettingField label="上传接口" hint="支持 {filename}、{key} 和 {hash} 占位符。">
+                    <input value={config.endpoint} onChange={(event) => update({ endpoint: event.target.value })} placeholder="https://api.example.com/upload" className="settings-input" />
+                  </SettingField>
+                </div>
+                <SettingField label="请求方式">
+                  <select value={config.customMethod} onChange={(event) => update({ customMethod: event.target.value as "POST" | "PUT" })} className="settings-input">
+                    <option value="POST">POST multipart/form-data</option>
+                    <option value="PUT">PUT 原始文件</option>
+                  </select>
+                </SettingField>
+                <SettingField label="文件字段名" hint="只用于 POST">
+                  <input value={config.customFileField} onChange={(event) => update({ customFileField: event.target.value })} placeholder="file" className="settings-input" />
+                </SettingField>
+                <div className="col-span-2">
+                  <SettingField label="响应 URL 字段" hint="例如 data.url；留空表示响应正文就是图片 URL。">
+                    <input value={config.customResponseUrlPath} onChange={(event) => update({ customResponseUrlPath: event.target.value })} placeholder="data.url" className="settings-input" />
+                  </SettingField>
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-stone-200 bg-stone-50/70 p-4 dark:border-stone-700 dark:bg-stone-800/40">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2 text-sm font-medium text-stone-800 dark:text-stone-200">
+                  <KeyRound size={15} />访问凭据
+                </div>
+                <span className={clsx(
+                  "inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px]",
+                  secretStatus === "saved"
+                    ? "bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-200"
+                    : "bg-white text-stone-500 dark:bg-stone-800 dark:text-stone-400",
+                )}>
+                  {secretStatus === "saved" && <ShieldCheck size={12} />}
+                  {secretStatus === "checking" ? "检查中" : secretStatus === "saved" ? "已保存在系统密钥库" : "尚未保存"}
+                </span>
+              </div>
+
+              {objectProvider && (
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <input type="password" autoComplete="off" value={accessKeyId} onChange={(event) => setAccessKeyId(event.target.value)} placeholder={provider === "cos" ? "SecretId" : "Access Key ID"} className="settings-input" />
+                  <input type="password" autoComplete="new-password" value={secretAccessKey} onChange={(event) => setSecretAccessKey(event.target.value)} placeholder={provider === "cos" ? "SecretKey" : "Secret Access Key"} className="settings-input" />
+                  <input type="password" autoComplete="new-password" value={sessionToken} onChange={(event) => setSessionToken(event.target.value)} placeholder="Session Token（可选）" className="settings-input col-span-2" />
+                </div>
+              )}
+              {provider === "github" && (
+                <input type="password" autoComplete="new-password" value={githubToken} onChange={(event) => setGithubToken(event.target.value)} placeholder="Fine-grained Personal Access Token（Contents: write）" className="settings-input mt-4" />
+              )}
+              {provider === "custom" && (
+                <>
+                  <textarea value={customHeaders} onChange={(event) => setCustomHeaders(event.target.value)} rows={4} spellCheck={false} className="settings-input mt-4 h-auto resize-y font-mono text-xs" aria-label="自定义鉴权请求头 JSON" />
+                  <p className="mt-2 text-[11px] leading-4 text-stone-400">请将 Token 放在这里，不要写进上传接口 URL；整组请求头只会保存到系统密钥库。</p>
+                </>
+              )}
+
+              {secretMessage && (
+                <div className={clsx("mt-3 text-xs", secretStatus === "error" ? "text-red-600 dark:text-red-400" : "text-stone-500 dark:text-stone-400")}>
+                  {secretMessage}
+                </div>
+              )}
+              <div className="mt-4 flex justify-end gap-2">
+                {secretStatus === "saved" && (
+                  <button type="button" onClick={() => void deleteSecrets()} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-red-600 transition hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30">
+                    <Trash2 size={13} />删除凭据
+                  </button>
+                )}
+                <button type="button" onClick={() => void saveSecrets()} className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-stone-100 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700">
+                  保存到系统密钥库
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SettingField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-stone-800 dark:text-stone-200">{label}</span>
+      {hint && <span className="mt-0.5 block text-[11px] leading-4 text-stone-400">{hint}</span>}
+      <span className="mt-2 block">{children}</span>
+    </label>
+  );
+}
+
+function providerLabel(provider: ImageHostProvider): string {
+  return ({ s3: "S3", oss: "OSS", cos: "COS", github: "GitHub", r2: "R2", custom: "自定义接口", none: "图床" })[provider];
+}
+
+function providerEndpointPlaceholder(provider: ImageHostProvider): string {
+  if (provider === "r2") return "https://<account-id>.r2.cloudflarestorage.com";
+  if (provider === "oss") return "https://oss-cn-hangzhou.aliyuncs.com";
+  if (provider === "cos") return "https://cos.ap-guangzhou.myqcloud.com";
+  return "留空使用 AWS 默认 Endpoint";
+}
+
+function providerEndpointHint(provider: ImageHostProvider): string {
+  return provider === "s3" ? "S3 兼容服务可填写自定义 Endpoint。" : "可留空使用该服务的标准 Endpoint。";
+}
+
+function providerRegionPlaceholder(provider: ImageHostProvider): string {
+  if (provider === "r2") return "auto";
+  if (provider === "oss") return "cn-hangzhou";
+  if (provider === "cos") return "ap-guangzhou";
+  return "ap-southeast-1";
 }
 
 function AboutSettings() {
@@ -412,4 +703,3 @@ async function openExternalUrl(url: string) {
   // 浏览器开发环境使用原生 window.open，桌面应用始终交给 opener 插件处理。
   window.open(url, "_blank", "noopener,noreferrer");
 }
-

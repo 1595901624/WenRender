@@ -8,8 +8,9 @@ use std::{
 };
 
 use commands::{
-    create_markdown_file, inspect_text_file, read_file_snapshot, read_image_data_url,
-    read_text_file, save_article_image, save_text_file_safely, scan_directory,
+    create_markdown_file, delete_image_host_secrets, get_image_host_secret_status,
+    inspect_text_file, read_file_snapshot, read_image_data_url, read_text_file, save_article_image,
+    save_image_host_secrets, save_text_file_safely, scan_directory, upload_image_to_host,
 };
 use tauri::{Emitter, Manager};
 
@@ -103,6 +104,10 @@ pub fn run() {
             save_article_image,
             inspect_text_file,
             save_text_file_safely,
+            save_image_host_secrets,
+            get_image_host_secret_status,
+            delete_image_host_secrets,
+            upload_image_to_host,
             take_pending_open_files
         ])
         .on_window_event(|window, event| {

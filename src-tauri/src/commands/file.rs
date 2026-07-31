@@ -9,7 +9,8 @@ use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat};
 
 use crate::models::{
-    CreatedMarkdownFile, FileFingerprint, FileInspection, FileSnapshot, SaveOutcome, StoredArticleImage,
+    CreatedMarkdownFile, FileFingerprint, FileInspection, FileSnapshot, SaveOutcome,
+    StoredArticleImage,
 };
 
 const MAX_IMPORTED_IMAGE_SIZE: usize = 100 * 1024 * 1024;
@@ -544,10 +545,8 @@ mod tests {
 
     #[test]
     fn creates_markdown_file_directly_in_requested_directory() {
-        let directory = std::env::temp_dir().join(format!(
-            "wenrender-create-test-{}",
-            std::process::id()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("wenrender-create-test-{}", std::process::id()));
         fs::create_dir_all(&directory).expect("create temporary directory");
 
         let created = create_markdown_file(

@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ArrowLeft, Blocks, Braces, Check, ChevronDown, Clipboard, Code2, Eye, FileDown, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Palette, PanelLeftClose, PanelLeftOpen, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
+import { ArrowLeft, Blocks, Braces, Check, ChevronDown, Clipboard, CloudUpload, Code2, Eye, FileDown, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Palette, PanelLeftClose, PanelLeftOpen, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
@@ -67,6 +67,10 @@ import {
   resolveLocalArticleImagePath,
   resolveArticleImage as resolveWorkspaceImage,
 } from "./features/images/articleImage";
+import {
+  uploadArticleLocalImages,
+  uploadImageFile,
+} from "./features/images/imageHosting";
 import type {
   ArticleImageInput,
   DirectoryNode,
@@ -586,6 +590,8 @@ function App() {
     const markdownImages: string[] = [];
     const storedImages: StoredArticleImage[] = [];
     let failedCount = 0;
+    let uploadedCount = 0;
+    let uploadFailedCount = 0;
     let lastError = "";
     for (const image of images) {
       try {
@@ -603,8 +609,24 @@ function App() {
           jpegQuality: imageSettings.jpegQuality,
         });
         storedImages.push(stored);
+        let destination = createMarkdownImageDestination(stored.relativePath);
+        if (
+          imageSettings.hosting.provider !== "none"
+          && imageSettings.hosting.uploadTiming === "on-insert"
+        ) {
+          const localPath = resolveLocalArticleImagePath(stored.relativePath, active.path);
+          if (localPath) {
+            try {
+              destination = (await uploadImageFile(localPath, imageSettings.hosting)).url;
+              uploadedCount += 1;
+            } catch (error) {
+              uploadFailedCount += 1;
+              lastError = String(error);
+            }
+          }
+        }
         markdownImages.push(
-          `![${createMarkdownImageAlt(stored.fileName)}](${createMarkdownImageDestination(stored.relativePath)})`,
+          `![${createMarkdownImageAlt(stored.fileName)}](${destination})`,
         );
       } catch (error) {
         failedCount += 1;
@@ -633,9 +655,11 @@ function App() {
         ? `，减少 ${formatImageFileSize(originalBytes - savedBytes)}`
         : "";
       const failedDetail = failedCount > 0 ? `；${failedCount} 张失败` : "";
+      const uploadDetail = uploadedCount > 0 ? `，已上传 ${uploadedCount} 张到图床` : "";
+      const uploadFailedDetail = uploadFailedCount > 0 ? `；${uploadFailedCount} 张上传失败，已保留本地引用` : "";
       notify(
-        `已保存 ${storedImages.length} 张图片${savedDetail}${failedDetail}`,
-        failedCount > 0 ? "neutral" : "success",
+        `已保存 ${storedImages.length} 张图片${savedDetail}${uploadDetail}${failedDetail}${uploadFailedDetail}`,
+        failedCount > 0 || uploadFailedCount > 0 ? "neutral" : "success",
       );
     } else {
       const detail = failedCount === 1 && lastError ? `：${lastError}` : `（${failedCount} 张）`;
@@ -643,6 +667,37 @@ function App() {
     }
     return markdownImages;
   }, [active.directoryId, active.externalState, active.path, directories, imageSettings, notify]);
+
+  const uploadCurrentArticleImages = useCallback(async (
+    source = active.content,
+    announce = true,
+  ) => {
+    if (imageSettings.hosting.provider === "none") {
+      if (announce) notify("请先在图片设置中选择并配置图床", "error");
+      return { content: source, uploadedCount: 0, failedCount: 0, lastError: "未配置图床" };
+    }
+    if (!active.path) {
+      if (announce) notify("请先保存当前文章，再上传图片", "error");
+      return { content: source, uploadedCount: 0, failedCount: 0, lastError: "文章尚未保存" };
+    }
+    const result = await uploadArticleLocalImages(source, active.path, imageSettings.hosting);
+    if (result.content !== source) {
+      setDocuments((items) => items.map((item) => (
+        item.id === activeId ? { ...item, content: result.content } : item
+      )));
+    }
+    if (announce) {
+      if (result.uploadedCount > 0) {
+        const failed = result.failedCount > 0 ? `；${result.failedCount} 张失败` : "";
+        notify(`已上传并替换 ${result.uploadedCount} 张本地图片${failed}`, result.failedCount > 0 ? "neutral" : "success");
+      } else if (result.failedCount > 0) {
+        notify(`图片上传失败：${result.lastError}`, "error");
+      } else {
+        notify("当前文章没有需要上传的本地图片", "neutral");
+      }
+    }
+    return result;
+  }, [active.content, active.path, activeId, imageSettings.hosting, notify]);
 
   const chooseImageStorageDirectory = useCallback(async () => {
     try {
@@ -1005,8 +1060,25 @@ function App() {
   };
 
   const copyToWechat = async () => {
+    let copySource = active.content;
+    let uploadDetail = "";
+    let uploadFailed = false;
+    if (
+      imageSettings.hosting.provider !== "none"
+      && imageSettings.hosting.uploadTiming === "on-copy"
+    ) {
+      const uploadResult = await uploadCurrentArticleImages(copySource, false);
+      copySource = uploadResult.content;
+      if (uploadResult.uploadedCount > 0) {
+        uploadDetail = `，已上传 ${uploadResult.uploadedCount} 张图片`;
+      }
+      if (uploadResult.failedCount > 0) {
+        uploadFailed = true;
+        uploadDetail += `；${uploadResult.failedCount} 张上传失败并改为嵌入本地图片`;
+      }
+    }
     const copyRendered = renderMarkdown(
-      active.content,
+      copySource,
       baseTheme,
       codeTheme,
       (source) => {
@@ -1019,7 +1091,7 @@ function App() {
     try {
       // 同时写入 HTML 与纯文本，让公众号编辑器优先读取带内联样式的版本。
       const blobHtml = new Blob([embedded.html], { type: "text/html" });
-      const blobText = new Blob([active.content], { type: "text/plain" });
+      const blobText = new Blob([copySource], { type: "text/plain" });
       await navigator.clipboard.write([new ClipboardItem({ "text/html": blobHtml, "text/plain": blobText })]);
       const detail = embedded.embeddedCount > 0
         ? `，已嵌入 ${embedded.embeddedCount} 张本地图片`
@@ -1027,7 +1099,7 @@ function App() {
       const failed = embedded.failedCount > 0
         ? `；${embedded.failedCount} 张图片转换失败`
         : "";
-      notify(`已复制，可直接粘贴到公众号编辑器${detail}${failed}`, embedded.failedCount > 0 ? "neutral" : "success");
+      notify(`已复制，可直接粘贴到公众号编辑器${uploadDetail}${detail}${failed}`, embedded.failedCount > 0 || uploadFailed ? "neutral" : "success");
     } catch {
       await navigator.clipboard.writeText(
         wrapHtml(embedded.html, active.name.replace(/\.md$/i, ""), baseTheme, typographyOverrides),
@@ -1471,6 +1543,7 @@ function App() {
               <DropdownMenu.Trigger asChild><button className="icon-button"><ChevronDown size={16} /></button></DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content align="end" className="z-50 min-w-44 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]">
+                  <DropdownMenu.Item onSelect={() => void uploadCurrentArticleImages()} className="menu-item"><CloudUpload size={15} />上传文章图片</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={exportHtml} className="menu-item"><FileDown size={15} />导出 HTML</DropdownMenu.Item>
                   <DropdownMenu.Item onSelect={saveDocumentAs} className="menu-item"><Save size={15} />另存为 Markdown</DropdownMenu.Item>
                   {/* <DropdownMenu.Item onSelect={newDocument} className="menu-item"><Menu size={15} />新建文章</DropdownMenu.Item> */}
