@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -21,6 +21,7 @@ import {
 } from "./components/WorkspaceSearchSidebar";
 import { Preview, type PreviewHandle, type PreviewMode } from "./components/Preview";
 import { TypographyPanel } from "./components/TypographyPanel";
+import { ThemeEditorPanel } from "./components/ThemeEditorPanel";
 import { TitleBar } from "./components/TitleBar";
 import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
@@ -34,6 +35,13 @@ import {
 import { parseImageSettings, type ImageSettings } from "./lib/imageSettings";
 import { renderMarkdown, wrapHtml } from "./lib/markdown";
 import { articleThemes, defaultTheme } from "./lib/themes";
+import {
+  duplicateTheme,
+  loadCustomThemes,
+  parseThemeFile,
+  saveCustomThemes,
+  serializeTheme,
+} from "./lib/customThemes";
 import {
   countTypographyOverrides,
   parseTypographyOverrides,
@@ -138,10 +146,12 @@ function App() {
   ));
   const [notice, setNotice] = useState<Notice>(null);
   const [themeId, setThemeId] = useState(() => window.localStorage.getItem("wenrender-theme") ?? defaultTheme.id);
+  const [customThemes, setCustomThemes] = useState(loadCustomThemes);
   const [codeThemeId, setCodeThemeId] = useState(
     () => window.localStorage.getItem("wenrender-code-theme") ?? defaultCodeTheme.id,
   );
   const [typographyPanelOpen, setTypographyPanelOpen] = useState(false);
+  const [themeEditorOpen, setThemeEditorOpen] = useState(false);
   const [typographyOverridesByTheme, setTypographyOverridesByTheme] = useState<TypographyOverridesByTheme>(
     () => parseTypographyOverrides(window.localStorage.getItem("wenrender-typography-overrides")),
   );
@@ -341,20 +351,25 @@ function App() {
     [active.cursorPosition, headings],
   );
   const effectiveViewMode = focusMode ? "editor" : viewMode;
-  const baseTheme = articleThemes.find((item) => item.id === themeId) ?? defaultTheme;
-  const codeTheme = codeThemes.find((item) => item.id === codeThemeId) ?? defaultCodeTheme;
-  const typographyOverrides = typographyOverridesByTheme[baseTheme.id] ?? {};
+  const allThemes = useMemo(() => [...articleThemes, ...customThemes], [customThemes]);
+  const selectedThemeId = active.themeId ?? themeId;
+  const selectedCodeThemeId = active.codeThemeId ?? codeThemeId;
+  const baseTheme = allThemes.find((item) => item.id === selectedThemeId) ?? defaultTheme;
+  const codeTheme = codeThemes.find((item) => item.id === selectedCodeThemeId) ?? defaultCodeTheme;
+  const typographyOverrides = active.typographyOverrides
+    ?? typographyOverridesByTheme[baseTheme.id]
+    ?? {};
   const typographyCustomCount = countTypographyOverrides(typographyOverrides);
   const updateTypographyOverrides = useCallback((overrides: TypographyOverrides) => {
-    setTypographyOverridesByTheme((items) => ({ ...items, [baseTheme.id]: overrides }));
-  }, [baseTheme.id]);
+    setDocuments((items) => items.map((item) => (
+      item.id === activeId ? { ...item, typographyOverrides: overrides } : item
+    )));
+  }, [activeId]);
   const resetTypographyOverrides = useCallback(() => {
-    setTypographyOverridesByTheme((items) => {
-      const next = { ...items };
-      delete next[baseTheme.id];
-      return next;
-    });
-  }, [baseTheme.id]);
+    setDocuments((items) => items.map((item) => (
+      item.id === activeId ? { ...item, typographyOverrides: {} } : item
+    )));
+  }, [activeId]);
   const rendered = useMemo(
     () => renderMarkdown(
       active.content,
@@ -374,6 +389,93 @@ function App() {
     setNotice({ message, tone });
     window.setTimeout(() => setNotice(null), 2200);
   }, []);
+
+  const selectArticleTheme = useCallback((nextThemeId: string) => {
+    setThemeId(nextThemeId);
+    setDocuments((items) => items.map((item) => (
+      item.id === activeId ? { ...item, themeId: nextThemeId } : item
+    )));
+  }, [activeId]);
+
+  const selectCodeTheme = useCallback((nextCodeThemeId: string) => {
+    setCodeThemeId(nextCodeThemeId);
+    setDocuments((items) => items.map((item) => (
+      item.id === activeId ? { ...item, codeThemeId: nextCodeThemeId } : item
+    )));
+  }, [activeId]);
+
+  const storeCustomThemes = useCallback((themes: typeof customThemes) => {
+    setCustomThemes(themes);
+    if (!saveCustomThemes(themes)) {
+      notify("主题保存失败，请检查本地存储空间", "error");
+    }
+  }, [notify]);
+
+  const duplicateCurrentTheme = useCallback(() => {
+    const copy = duplicateTheme(baseTheme);
+    storeCustomThemes([...customThemes, copy]);
+    selectArticleTheme(copy.id);
+    setTypographyPanelOpen(false);
+    setThemeEditorOpen(true);
+    notify(`已创建「${copy.name}」`, "success");
+  }, [baseTheme, customThemes, notify, selectArticleTheme, storeCustomThemes]);
+
+  const openThemeEditor = useCallback(() => {
+    if (baseTheme.custom) {
+      setTypographyPanelOpen(false);
+      setThemeEditorOpen(true);
+      return;
+    }
+    duplicateCurrentTheme();
+  }, [baseTheme.custom, duplicateCurrentTheme]);
+
+  const updateCustomTheme = useCallback((theme: typeof baseTheme) => {
+    storeCustomThemes(customThemes.map((item) => item.id === theme.id ? theme : item));
+  }, [customThemes, storeCustomThemes]);
+
+  const importTheme = useCallback(async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: "文染主题", extensions: ["json", "wenrender-theme"] }],
+      });
+      if (!selected) return;
+      const imported = parseThemeFile(await readTextFile(selected));
+      storeCustomThemes([...customThemes, imported]);
+      selectArticleTheme(imported.id);
+      setTypographyPanelOpen(false);
+      setThemeEditorOpen(true);
+      notify(`已导入「${imported.name}」`, "success");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "主题导入失败", "error");
+    }
+  }, [customThemes, notify, selectArticleTheme, storeCustomThemes]);
+
+  const exportCurrentTheme = useCallback(async () => {
+    try {
+      const selected = await save({
+        defaultPath: `${baseTheme.name.replace(/[\\/:*?"<>|]/g, "-")}.wenrender-theme.json`,
+        filters: [{ name: "文染主题", extensions: ["json"] }],
+      });
+      if (!selected) return;
+      await writeTextFile(selected, serializeTheme(baseTheme));
+      notify("主题文件已导出，可直接分享", "success");
+    } catch {
+      notify("主题导出失败", "error");
+    }
+  }, [baseTheme, notify]);
+
+  const deleteCurrentTheme = useCallback(() => {
+    if (!baseTheme.custom) {
+      notify("内置主题不能删除，可先复制后编辑", "neutral");
+      return;
+    }
+    const next = customThemes.filter((item) => item.id !== baseTheme.id);
+    storeCustomThemes(next);
+    selectArticleTheme(defaultTheme.id);
+    setThemeEditorOpen(false);
+    notify(`已删除「${baseTheme.name}」`, "success");
+  }, [baseTheme, customThemes, notify, selectArticleTheme, storeCustomThemes]);
 
   const saveContentBlock = useCallback((draft: ContentBlockDraft) => {
     const existing = draft.id ? contentBlocks.find((item) => item.id === draft.id) : undefined;
@@ -1156,16 +1258,18 @@ function App() {
                       <div className="text-sm font-semibold text-stone-800 dark:text-stone-100">文章主题</div>
                       <div className="mt-0.5 text-[11px] text-stone-400">选择后将立即应用到预览和导出内容</div>
                     </div>
-                    <span className="rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-500 dark:bg-stone-800 dark:text-stone-400">{articleThemes.length} 款内置</span>
+                    <span className="rounded-full bg-stone-100 px-2 py-1 text-[10px] font-medium text-stone-500 dark:bg-stone-800 dark:text-stone-400">
+                      {articleThemes.length} 款内置 · {customThemes.length} 款自定义
+                    </span>
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
-                    {articleThemes.map((item) => (
+                    {allThemes.map((item) => (
                       <DropdownMenu.Item
                         key={item.id}
-                        onSelect={() => setThemeId(item.id)}
+                        onSelect={() => selectArticleTheme(item.id)}
                         className={clsx(
                           "group relative flex cursor-default items-center gap-3 rounded-xl border p-2.5 outline-none transition focus:bg-stone-50 dark:focus:bg-stone-800",
-                          item.id === themeId
+                          item.id === selectedThemeId
                             ? "border-stone-300 bg-stone-50 dark:border-stone-600 dark:bg-stone-800"
                             : "border-transparent hover:border-stone-200 dark:hover:border-stone-700",
                         )}
@@ -1189,13 +1293,27 @@ function App() {
                           </div>
                           <div className="mt-1 truncate text-[11px] text-stone-400">{item.description}</div>
                         </div>
-                        {item.id === themeId && (
+                        {item.id === selectedThemeId && (
                           <span className="absolute right-2 top-2 grid h-4 w-4 place-items-center rounded-full bg-stone-800 text-white dark:bg-stone-100 dark:text-stone-900">
                             <Check size={10} strokeWidth={3} />
                           </span>
                         )}
                       </DropdownMenu.Item>
                     ))}
+                  </div>
+                  <div className="mt-2 grid grid-cols-4 gap-1 border-t border-stone-100 pt-2 dark:border-stone-700">
+                    <DropdownMenu.Item onSelect={openThemeEditor} className="cursor-default rounded-lg px-2 py-2 text-center text-xs text-stone-600 outline-none focus:bg-stone-100 dark:text-stone-300 dark:focus:bg-stone-800">
+                      编辑当前
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item onSelect={duplicateCurrentTheme} className="cursor-default rounded-lg px-2 py-2 text-center text-xs text-stone-600 outline-none focus:bg-stone-100 dark:text-stone-300 dark:focus:bg-stone-800">
+                      复制主题
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item onSelect={() => void importTheme()} className="cursor-default rounded-lg px-2 py-2 text-center text-xs text-stone-600 outline-none focus:bg-stone-100 dark:text-stone-300 dark:focus:bg-stone-800">
+                      导入 JSON
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item onSelect={() => void exportCurrentTheme()} className="cursor-default rounded-lg px-2 py-2 text-center text-xs text-stone-600 outline-none focus:bg-stone-100 dark:text-stone-300 dark:focus:bg-stone-800">
+                      导出 / 分享
+                    </DropdownMenu.Item>
                   </div>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
@@ -1221,10 +1339,10 @@ function App() {
                     {codeThemes.map((item) => (
                       <DropdownMenu.Item
                         key={item.id}
-                        onSelect={() => setCodeThemeId(item.id)}
+                        onSelect={() => selectCodeTheme(item.id)}
                         className={clsx(
                           "flex cursor-default items-center gap-3 rounded-xl border p-2 outline-none transition",
-                          item.id === codeThemeId
+                          item.id === selectedCodeThemeId
                             ? "border-stone-300 bg-stone-50 dark:border-stone-600 dark:bg-stone-800"
                             : "border-transparent focus:bg-stone-50 dark:focus:bg-stone-800",
                         )}
@@ -1250,7 +1368,7 @@ function App() {
                           </div>
                           <div className="mt-0.5 truncate text-[11px] text-stone-400">{item.description}</div>
                         </div>
-                        {item.id === codeThemeId && <Check size={15} className="shrink-0 text-stone-800 dark:text-stone-100" />}
+                        {item.id === selectedCodeThemeId && <Check size={15} className="shrink-0 text-stone-800 dark:text-stone-100" />}
                       </DropdownMenu.Item>
                     ))}
                   </div>
@@ -1269,6 +1387,7 @@ function App() {
               title="调整文章字体与标题层级"
               onClick={() => {
                 setTypographyPanelOpen((value) => !value);
+                setThemeEditorOpen(false);
                 if (viewMode === "editor") setViewMode("split");
               }}
             >
@@ -1422,6 +1541,17 @@ function App() {
               onChange={updateTypographyOverrides}
               onReset={resetTypographyOverrides}
               onClose={() => setTypographyPanelOpen(false)}
+            />
+          )}
+          {themeEditorOpen && (
+            <ThemeEditorPanel
+              theme={baseTheme}
+              onChange={updateCustomTheme}
+              onDuplicate={duplicateCurrentTheme}
+              onImport={() => void importTheme()}
+              onExport={() => void exportCurrentTheme()}
+              onDelete={deleteCurrentTheme}
+              onClose={() => setThemeEditorOpen(false)}
             />
           )}
         </main>

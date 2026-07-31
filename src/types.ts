@@ -1,3 +1,5 @@
+import type { TypographyOverrides } from "./lib/typography";
+
 export type LineEnding = "lf" | "crlf";
 
 export type FileFingerprint = {
@@ -36,6 +38,9 @@ export type OpenDocument = {
   recoveredDraft?: boolean;
   // 当前光标位置会随工作区保存，用于重新打开文章时恢复编辑位置。
   cursorPosition?: number;
+  themeId?: string;
+  codeThemeId?: string;
+  typographyOverrides?: TypographyOverrides;
   // 存在该字段时，文件归属于某个已打开的目录树；否则显示在独立文件区域。
   directoryId?: string;
 };

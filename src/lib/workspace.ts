@@ -14,6 +14,9 @@ export type PersistedDocument = {
   scratchContent?: string;
   scratchSavedContent?: string;
   cursorPosition?: number;
+  themeId?: string;
+  codeThemeId?: string;
+  typographyOverrides?: OpenDocument["typographyOverrides"];
 };
 
 export type WorkspaceSession = {
@@ -66,6 +69,9 @@ export function saveWorkspaceSession(
         draftContent: needsSaveAttention(document) ? document.content : undefined,
         baseHash: needsSaveAttention(document) ? document.diskFingerprint?.hash : undefined,
         cursorPosition: document.cursorPosition,
+        themeId: document.themeId,
+        codeThemeId: document.codeThemeId,
+        typographyOverrides: document.typographyOverrides,
       };
     }
 
@@ -75,6 +81,9 @@ export function saveWorkspaceSession(
       scratchContent: document.content,
       scratchSavedContent: document.savedContent,
       cursorPosition: document.cursorPosition,
+      themeId: document.themeId,
+      codeThemeId: document.codeThemeId,
+      typographyOverrides: document.typographyOverrides,
     };
   });
 

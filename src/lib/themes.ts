@@ -10,11 +10,19 @@ export type HeadingStyle =
   | "tag"
   | "newspaper";
 
+export type TableStyle = "accent-header" | "soft-header" | "minimal" | "striped";
+export type LinkStyle = "plain" | "underline" | "accent-underline";
+export type CodeBlockStyle = "bordered" | "flat" | "shadow";
+export type ImageShadow = "none" | "soft" | "strong";
+export type ImageCaptionStyle = "none" | "muted" | "centered";
+
 export type ArticleTheme = {
   // 主题同时描述预览和最终导出所需的完整视觉参数，避免渲染器硬编码某一套样式。
   id: string;
   name: string;
   description: string;
+  custom?: boolean;
+  customCss?: string;
   swatches: [string, string, string];
   colors: {
     accent: string;
@@ -43,8 +51,13 @@ export type ArticleTheme = {
     headingStyle: HeadingStyle;
     h1Align: "left" | "center";
     blockquoteStyle: "border" | "soft" | "quote" | "card";
+    tableStyle?: TableStyle;
+    linkStyle?: LinkStyle;
+    codeStyle?: CodeBlockStyle;
     codeRadius: number;
     imageRadius: number;
+    imageShadow?: ImageShadow;
+    imageCaptionStyle?: ImageCaptionStyle;
   };
 };
 

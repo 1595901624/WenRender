@@ -40,6 +40,9 @@ export async function restoreWorkspaceSession(session: WorkspaceSession): Promis
         lineEnding: "lf", hasBom: false, readOnly: false, externalState: "normal",
         recoveredDraft: hasUnsavedChanges({ content, savedContent }),
         cursorPosition: persisted.cursorPosition,
+        themeId: persisted.themeId,
+        codeThemeId: persisted.codeThemeId,
+        typographyOverrides: persisted.typographyOverrides,
       });
       if (index === session.activeIndex) restoredActiveId = id;
       continue;
@@ -61,6 +64,9 @@ export async function restoreWorkspaceSession(session: WorkspaceSession): Promis
         recoveredDraft: restoredDraft !== undefined,
         cursorPosition: persisted.cursorPosition,
         directoryId: directory?.id,
+        themeId: persisted.themeId,
+        codeThemeId: persisted.codeThemeId,
+        typographyOverrides: persisted.typographyOverrides,
       });
     } catch {
       // 文件关闭期间被删除时，只要有草稿就仍恢复它，避免用户内容丢失。
@@ -71,6 +77,9 @@ export async function restoreWorkspaceSession(session: WorkspaceSession): Promis
         lineEnding: "lf", hasBom: false, readOnly: false, externalState: "deleted", recoveredDraft: true,
         cursorPosition: persisted.cursorPosition,
         directoryId: directory?.id,
+        themeId: persisted.themeId,
+        codeThemeId: persisted.codeThemeId,
+        typographyOverrides: persisted.typographyOverrides,
       });
     }
     if (index === session.activeIndex) restoredActiveId = id;

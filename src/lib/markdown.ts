@@ -54,7 +54,12 @@ function codeBlock(code: string, language: string, theme: ArticleTheme, codeThem
     (_, className: string) => `<span style="${codeTokenStyle(codeTheme, className)}">`,
   );
 
-  return `<pre style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:18px 0;padding:18px 17px;background-color:${codeTheme.background};border:1px solid ${codeTheme.border};border-radius:${theme.appearance.codeRadius}px;color:${codeTheme.foreground};font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;tab-size:4;white-space:pre;word-break:normal;box-sizing:border-box;"><code style="font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;white-space:pre;">${protectSpaces(inlineHighlighted)}</code></pre>`;
+  const codeDecoration = theme.appearance.codeStyle === "flat"
+    ? "border:none;"
+    : theme.appearance.codeStyle === "shadow"
+      ? `border:1px solid ${codeTheme.border};box-shadow:0 8px 24px rgba(0,0,0,.14);`
+      : `border:1px solid ${codeTheme.border};`;
+  return `<pre style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:18px 0;padding:18px 17px;background-color:${codeTheme.background};${codeDecoration}border-radius:${theme.appearance.codeRadius}px;color:${codeTheme.foreground};font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;tab-size:4;white-space:pre;word-break:normal;box-sizing:border-box;"><code style="font-family:Consolas,'SFMono-Regular',Menlo,monospace !important;font-size:${theme.typography.codeSize}px !important;line-height:${theme.typography.codeLineHeight} !important;white-space:pre;">${protectSpaces(inlineHighlighted)}</code></pre>`;
 }
 
 function createRenderer(
@@ -67,6 +72,7 @@ function createRenderer(
   const bodyText = `font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight} !important;color:${theme.colors.text};letter-spacing:0;text-align:left;`;
   const paragraph = `margin:0 0 ${typography.paragraphSpacing}px;${bodyText}`;
   const inlineCode = `font-size:${theme.typography.codeSize}px;word-break:break-word;padding:2px 5px;border-radius:4px;margin:0 2px;color:${theme.colors.accent};font-weight:600;background-color:${theme.colors.inlineCodeBackground};font-family:Consolas,'SFMono-Regular',Menlo,monospace;`;
+  let tableRow = 0;
   // 所有关键样式直接写进标签，复制到公众号后不需要加载样式表或脚本。
   const md = new MarkdownIt({
     html: true,
@@ -96,7 +102,12 @@ function createRenderer(
   md.renderer.rules.ordered_list_open = () => `<ol style="margin:8px 0 18px;padding-left:24px;font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight};">`;
   md.renderer.rules.list_item_open = () => '<li style="margin:7px 0;">';
   md.renderer.rules.link_open = (tokens, index, options, env, self) => {
-    tokens[index].attrSet("style", `color:${theme.colors.link};text-decoration:none;`);
+    const decoration = theme.appearance.linkStyle === "underline"
+      ? "text-decoration:underline;text-underline-offset:3px;"
+      : theme.appearance.linkStyle === "accent-underline"
+        ? `text-decoration:none;border-bottom:1px solid ${theme.colors.accent};`
+        : "text-decoration:none;";
+    tokens[index].attrSet("style", `color:${theme.colors.link};${decoration}`);
     tokens[index].attrSet("target", "_blank");
     return self.renderToken(tokens, index, options);
   };
@@ -105,12 +116,42 @@ function createRenderer(
     const originalSource = token.attrGet("src") ?? "";
     const src = resolveImage?.(originalSource) ?? originalSource;
     const alt = token.content;
-    return `<img src="${md.utils.escapeHtml(src)}" alt="${md.utils.escapeHtml(alt)}" style="display:block;max-width:100%;height:auto;margin:20px auto;border-radius:${theme.appearance.imageRadius}px;" />`;
+    const shadow = theme.appearance.imageShadow === "soft"
+      ? "box-shadow:0 8px 24px rgba(0,0,0,.10);"
+      : theme.appearance.imageShadow === "strong"
+        ? "box-shadow:0 14px 34px rgba(0,0,0,.20);"
+        : "";
+    const captionStyle = theme.appearance.imageCaptionStyle;
+    const caption = alt && captionStyle && captionStyle !== "none"
+      ? `<span style="display:block;margin:8px auto 20px;color:${theme.colors.muted};font-size:12px;line-height:1.6;text-align:${captionStyle === "centered" ? "center" : "left"};">${md.utils.escapeHtml(alt)}</span>`
+      : "";
+    const bottomMargin = caption ? "0" : "20px";
+    return `<span style="display:block;"><img src="${md.utils.escapeHtml(src)}" alt="${md.utils.escapeHtml(alt)}" style="display:block;max-width:100%;height:auto;margin:20px auto ${bottomMargin};border-radius:${theme.appearance.imageRadius}px;${shadow}" />${caption}</span>`;
   };
-  md.renderer.rules.table_open = () => `<div style="overflow-x:auto;margin:20px 0;"><table style="width:100%;border-collapse:collapse;color:${theme.colors.text};font-size:14px;line-height:1.7;text-align:left;">`;
+  md.renderer.rules.table_open = () => {
+    tableRow = 0;
+    return `<div style="overflow-x:auto;margin:20px 0;"><table style="width:100%;border-collapse:collapse;color:${theme.colors.text};font-size:14px;line-height:1.7;text-align:left;">`;
+  };
+  md.renderer.rules.tr_open = () => {
+    tableRow += 1;
+    const background = theme.appearance.tableStyle === "striped" && tableRow > 1 && tableRow % 2 === 1
+      ? theme.colors.accentSoft
+      : "transparent";
+    return `<tr style="background-color:${background};">`;
+  };
   md.renderer.rules.table_close = () => "</table></div>";
-  md.renderer.rules.th_open = () => `<th style="padding:9px 10px;border:1px solid ${theme.colors.accent};background-color:${theme.colors.accent} !important;color:${contrastText(theme.colors.accent)} !important;font-weight:600;">`;
-  md.renderer.rules.td_open = () => `<td style="padding:9px 10px;border:1px solid ${theme.colors.border};background-color:${theme.colors.articleBackground};">`;
+  md.renderer.rules.th_open = () => {
+    if (theme.appearance.tableStyle === "minimal") {
+      return `<th style="padding:9px 10px;border-bottom:2px solid ${theme.colors.accent};background:transparent;color:${theme.colors.heading};font-weight:600;">`;
+    }
+    if (theme.appearance.tableStyle === "soft-header" || theme.appearance.tableStyle === "striped") {
+      return `<th style="padding:9px 10px;border:1px solid ${theme.colors.border};background-color:${theme.colors.accentSoft} !important;color:${theme.colors.heading} !important;font-weight:600;">`;
+    }
+    return `<th style="padding:9px 10px;border:1px solid ${theme.colors.accent};background-color:${theme.colors.accent} !important;color:${contrastText(theme.colors.accent)} !important;font-weight:600;">`;
+  };
+  md.renderer.rules.td_open = () => theme.appearance.tableStyle === "minimal"
+    ? `<td style="padding:9px 10px;border-bottom:1px solid ${theme.colors.border};background:transparent;">`
+    : `<td style="padding:9px 10px;border:1px solid ${theme.colors.border};background-color:transparent;">`;
   return md;
 }
 
@@ -185,7 +226,11 @@ export function renderMarkdown(
   typographyOverrides: TypographyOverrides = {},
 ): string {
   const md = createRenderer(theme, codeTheme, resolveImage, typographyOverrides);
-  return md.render(source);
+  const rendered = md.render(source);
+  const customCss = theme.customCss?.trim().replace(/<\/style/gi, "<\\/style");
+  return customCss
+    ? `<style>${customCss}</style><section class="wenrender-theme-content">${rendered}</section>`
+    : rendered;
 }
 
 export function wrapHtml(
@@ -204,7 +249,7 @@ export function wrapHtml(
   <title>${escapedTitle}</title>
 </head>
 <body style="margin:0;background:${theme.colors.articleBackground};color:${theme.colors.text};font-family:${typography.bodyFontFamily};">
-  <article style="max-width:677px;margin:0 auto;padding:32px 20px 48px;box-sizing:border-box;background-color:${theme.colors.articleBackground};font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight};">${rendered}</article>
+  <article class="wenrender-article" style="max-width:677px;margin:0 auto;padding:32px 20px 48px;box-sizing:border-box;background-color:${theme.colors.articleBackground};font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight};">${rendered}</article>
 </body>
 </html>`;
 }
