@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, FilePlus2 } from "lucide-react";
+import { AlertTriangle, FilePlus2, Pencil, Trash2 } from "lucide-react";
 import type { FileSnapshot, OpenDocument } from "../../types";
 
 type PendingClose = {
@@ -19,11 +19,19 @@ export type NewMarkdownTarget = {
   directoryPath: string;
 };
 
+export type FileOperationRequest = {
+  kind: "rename" | "delete";
+  path: string;
+  name: string;
+  dirty: boolean;
+};
+
 type AppDialogsProps = {
   pendingClose: PendingClose | null;
   saveConflict: SaveConflict | null;
   conflictDocument?: OpenDocument;
   newMarkdownTarget: NewMarkdownTarget | null;
+  fileOperation: FileOperationRequest | null;
   onCancelPendingClose: () => void;
   onDiscardPendingClose: () => void;
   onSavePendingClose: () => void;
@@ -33,6 +41,9 @@ type AppDialogsProps = {
   onOverwriteConflict: () => void;
   onCancelNewMarkdown: () => void;
   onCreateNewMarkdown: (name: string) => Promise<boolean>;
+  onCancelFileOperation: () => void;
+  onRenameFile: (name: string) => Promise<boolean>;
+  onDeleteFile: () => Promise<boolean>;
 };
 
 /**
@@ -44,6 +55,7 @@ export function AppDialogs({
   saveConflict,
   conflictDocument,
   newMarkdownTarget,
+  fileOperation,
   onCancelPendingClose,
   onDiscardPendingClose,
   onSavePendingClose,
@@ -53,6 +65,9 @@ export function AppDialogs({
   onOverwriteConflict,
   onCancelNewMarkdown,
   onCreateNewMarkdown,
+  onCancelFileOperation,
+  onRenameFile,
+  onDeleteFile,
 }: AppDialogsProps) {
   return (
     <>
@@ -131,7 +146,142 @@ export function AppDialogs({
           onCreate={onCreateNewMarkdown}
         />
       )}
+      {fileOperation?.kind === "rename" && (
+        <RenameFileDialog
+          key={fileOperation.path}
+          request={fileOperation}
+          onCancel={onCancelFileOperation}
+          onRename={onRenameFile}
+        />
+      )}
+      {fileOperation?.kind === "delete" && (
+        <DeleteFileDialog
+          key={fileOperation.path}
+          request={fileOperation}
+          onCancel={onCancelFileOperation}
+          onDelete={onDeleteFile}
+        />
+      )}
     </>
+  );
+}
+
+function RenameFileDialog({
+  request,
+  onCancel,
+  onRename,
+}: {
+  request: FileOperationRequest;
+  onCancel: () => void;
+  onRename: (name: string) => Promise<boolean>;
+}) {
+  const [name, setName] = useState(request.name);
+  const [submitting, setSubmitting] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    const extensionIndex = request.name.lastIndexOf(".");
+    input.setSelectionRange(0, extensionIndex > 0 ? extensionIndex : request.name.length);
+  }, [request.name]);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    const renamed = await onRename(name);
+    if (!renamed) setSubmitting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[85] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rename-file-title"
+        onSubmit={submit}
+        className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl dark:border-stone-700 dark:bg-[#242522]"
+      >
+        <div className="flex items-start gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-200">
+            <Pencil size={17} />
+          </span>
+          <div className="min-w-0">
+            <h2 id="rename-file-title" className="text-base font-semibold text-stone-900 dark:text-stone-100">重命名文件</h2>
+            <p className="mt-1 truncate text-sm text-stone-500 dark:text-stone-400" title={request.path}>{request.path}</p>
+          </div>
+        </div>
+        <label className="mt-5 block">
+          <span className="text-xs font-medium text-stone-600 dark:text-stone-300">新文件名</span>
+          <input
+            ref={inputRef}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            disabled={submitting}
+            className="mt-1.5 h-10 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm text-stone-900 outline-none focus:border-stone-500 focus:ring-2 focus:ring-stone-200 disabled:opacity-60 dark:border-stone-600 dark:bg-[#1d1e1b] dark:text-stone-100 dark:focus:ring-stone-700"
+          />
+          <span className="mt-1.5 block text-[11px] text-stone-400">文件会留在原目录；请保留需要的扩展名。</span>
+        </label>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} disabled={submitting} className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100 disabled:opacity-60 dark:text-stone-300 dark:hover:bg-stone-800">取消</button>
+          <button type="submit" disabled={submitting || !name.trim()} className="rounded-lg bg-[#20211f] px-3.5 py-2 text-sm font-medium text-white hover:bg-black disabled:opacity-60">
+            {submitting ? "正在重命名…" : "重命名"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function DeleteFileDialog({
+  request,
+  onCancel,
+  onDelete,
+}: {
+  request: FileOperationRequest;
+  onCancel: () => void;
+  onDelete: () => Promise<boolean>;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+
+  const remove = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    const deleted = await onDelete();
+    if (!deleted) setSubmitting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[85] grid place-items-center bg-black/30 p-5 backdrop-blur-[1px]">
+      <div role="alertdialog" aria-modal="true" aria-labelledby="delete-file-title" className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-5 shadow-2xl dark:border-stone-700 dark:bg-[#242522]">
+        <div className="flex items-start gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300">
+            <Trash2 size={17} />
+          </span>
+          <div className="min-w-0">
+            <h2 id="delete-file-title" className="text-base font-semibold text-stone-900 dark:text-stone-100">将文件移到回收站？</h2>
+            <p className="mt-1.5 text-sm leading-6 text-stone-500 dark:text-stone-400">
+              「{request.name}」会移入操作系统回收站，通常可以从回收站恢复。
+            </p>
+          </div>
+        </div>
+        {request.dirty && (
+          <div className="mt-4 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            这个文件在编辑器中有未保存修改。继续后，这些修改不会写入回收站中的文件。
+          </div>
+        )}
+        <p className="mt-4 truncate font-mono text-[11px] text-stone-400" title={request.path}>{request.path}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} disabled={submitting} className="rounded-lg px-3 py-2 text-sm text-stone-600 hover:bg-stone-100 disabled:opacity-60 dark:text-stone-300 dark:hover:bg-stone-800">取消</button>
+          <button type="button" onClick={() => void remove()} disabled={submitting} className="rounded-lg bg-red-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60">
+            {submitting ? "正在移动…" : "移到回收站"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

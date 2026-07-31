@@ -10,9 +10,9 @@ use std::{
 use commands::{
     create_markdown_file, delete_image_host_secrets, delete_wechat_account_secret,
     get_image_host_secret_status, get_wechat_account_secret_status, inspect_text_file,
-    read_file_snapshot, read_image_data_url, read_text_file, save_article_image,
-    save_image_host_secrets, save_text_file_safely, save_wechat_account_secret, scan_directory,
-    sync_wechat_draft, test_wechat_account, upload_image_to_host,
+    move_file_to_trash, read_file_snapshot, read_image_data_url, read_text_file, rename_file,
+    save_article_image, save_image_host_secrets, save_text_file_safely, save_wechat_account_secret,
+    scan_directory, sync_wechat_draft, test_wechat_account, upload_image_to_host,
 };
 use tauri::{Emitter, Manager};
 
@@ -106,6 +106,8 @@ pub fn run() {
             save_article_image,
             inspect_text_file,
             save_text_file_safely,
+            rename_file,
+            move_file_to_trash,
             save_image_host_secrets,
             get_image_host_secret_status,
             delete_image_host_secrets,

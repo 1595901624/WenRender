@@ -7,6 +7,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat};
+use serde::Serialize;
 
 use crate::models::{
     CreatedMarkdownFile, FileFingerprint, FileInspection, FileSnapshot, SaveOutcome,
@@ -346,6 +347,132 @@ pub(crate) fn create_markdown_file(
         path: path.to_string_lossy().into_owned(),
         snapshot: read_snapshot(&path)?,
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RenamedFile {
+    path: String,
+    name: String,
+}
+
+/// 在原目录内重命名普通文件，不允许通过新名称移动到其它目录。
+#[tauri::command]
+pub(crate) fn rename_file(file_path: String, new_name: String) -> Result<RenamedFile, String> {
+    let source = PathBuf::from(&file_path);
+    if !source.is_file() {
+        return Err(format!("文件不存在或不是普通文件：{}", source.display()));
+    }
+    let requested = validate_file_name(&new_name)?;
+    let parent = source
+        .parent()
+        .ok_or_else(|| format!("无法确定文件目录：{}", source.display()))?;
+    let target = parent.join(requested);
+    if source == target {
+        return Ok(RenamedFile {
+            path: file_path,
+            name: requested.to_string(),
+        });
+    }
+
+    let same_existing_file = target.exists()
+        && same_file::is_same_file(&source, &target)
+            .map_err(|error| format!("无法检查目标文件「{requested}」：{error}"))?;
+    if target.exists() && !same_existing_file {
+        return Err(format!("同目录下已存在名为「{requested}」的文件"));
+    }
+
+    if same_existing_file {
+        let temporary = unique_rename_path(parent, &source);
+        fs::rename(&source, &temporary)
+            .map_err(|error| format!("无法准备重命名 {}：{error}", source.display()))?;
+        if let Err(error) = fs::rename(&temporary, &target) {
+            let _ = fs::rename(&temporary, &source);
+            return Err(format!("无法将文件重命名为「{requested}」：{error}"));
+        }
+    } else {
+        fs::rename(&source, &target)
+            .map_err(|error| format!("无法将文件重命名为「{requested}」：{error}"))?;
+    }
+
+    Ok(RenamedFile {
+        path: target.to_string_lossy().into_owned(),
+        name: requested.to_string(),
+    })
+}
+
+/// 将普通文件移入操作系统回收站/废纸篓，避免在文件树中执行不可恢复删除。
+#[tauri::command]
+pub(crate) fn move_file_to_trash(file_path: String) -> Result<(), String> {
+    let path = PathBuf::from(&file_path);
+    if !path.is_file() {
+        return Err(format!("文件不存在或不是普通文件：{}", path.display()));
+    }
+    trash::delete(&path).map_err(|error| format!("无法将文件移入系统回收站：{error}"))
+}
+
+fn validate_file_name(value: &str) -> Result<&str, String> {
+    let name = value.trim();
+    if name.is_empty() {
+        return Err("文件名不能为空".to_string());
+    }
+    if name == "." || name == ".." || name.contains(['/', '\\']) {
+        return Err("文件名不能包含路径分隔符".to_string());
+    }
+    #[cfg(windows)]
+    {
+        if name.contains(['<', '>', ':', '"', '|', '?', '*']) {
+            return Err("文件名包含 Windows 不允许的字符".to_string());
+        }
+        if name.ends_with(['.', ' ']) {
+            return Err("Windows 文件名不能以句点或空格结尾".to_string());
+        }
+        let stem = name
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        if matches!(
+            stem.as_str(),
+            "CON"
+                | "PRN"
+                | "AUX"
+                | "NUL"
+                | "COM1"
+                | "COM2"
+                | "COM3"
+                | "COM4"
+                | "COM5"
+                | "COM6"
+                | "COM7"
+                | "COM8"
+                | "COM9"
+                | "LPT1"
+                | "LPT2"
+                | "LPT3"
+                | "LPT4"
+                | "LPT5"
+                | "LPT6"
+                | "LPT7"
+                | "LPT8"
+                | "LPT9"
+        ) {
+            return Err("该名称是 Windows 保留文件名".to_string());
+        }
+    }
+    Ok(name)
+}
+
+fn unique_rename_path(parent: &Path, source: &Path) -> PathBuf {
+    let source_name = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("file");
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    parent.join(format!(".{source_name}.wenrender-rename-{unique}.tmp"))
 }
 
 /// 检查文件是否存在及是否被外部程序修改，不返回文件正文。
@@ -776,5 +903,32 @@ mod tests {
         assert_eq!(outcome.status, "conflict");
         assert_eq!(outcome.reason.as_deref(), Some("deleted"));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn renames_a_file_without_leaving_its_directory() {
+        let directory =
+            std::env::temp_dir().join(format!("wenrender-rename-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).expect("create temporary directory");
+        let source = directory.join("before.md");
+        fs::write(&source, "# article").expect("create source file");
+
+        let renamed = rename_file(
+            source.to_string_lossy().into_owned(),
+            "after.md".to_string(),
+        )
+        .expect("rename file");
+
+        assert_eq!(PathBuf::from(&renamed.path), directory.join("after.md"));
+        assert_eq!(renamed.name, "after.md");
+        assert!(!source.exists());
+        assert!(directory.join("after.md").is_file());
+        assert!(rename_file(
+            directory.join("after.md").to_string_lossy().into_owned(),
+            "../outside.md".to_string(),
+        )
+        .is_err());
+
+        fs::remove_dir_all(directory).expect("remove temporary directory");
     }
 }

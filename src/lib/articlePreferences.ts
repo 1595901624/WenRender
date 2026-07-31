@@ -37,6 +37,16 @@ export function replaceArticleThemePreference(themeId: string, replacementThemeI
   return !changed || writePreferences(preferences);
 }
 
+export function moveArticlePreferences(previousPath: string, nextPath: string): boolean {
+  const preferences = loadPreferences();
+  const previousKey = normalizePath(previousPath);
+  const nextKey = normalizePath(nextPath);
+  if (previousKey === nextKey || !preferences[previousKey]) return true;
+  preferences[nextKey] = preferences[previousKey];
+  delete preferences[previousKey];
+  return writePreferences(preferences);
+}
+
 function loadPreferences(): Record<string, ArticlePreferences> {
   try {
     const value = JSON.parse(window.localStorage.getItem(storageKey) ?? "{}");

@@ -47,12 +47,17 @@ import {
   type TypographyOverrides,
 } from "./lib/typography";
 import {
+  moveArticlePreferences,
   replaceArticleThemePreference,
   updateArticlePreferences,
 } from "./lib/articlePreferences";
 import { loadWorkspaceSession, saveWorkspaceSession } from "./lib/workspace";
 import { SettingsPage } from "./features/settings/SettingsPage";
-import { AppDialogs, type NewMarkdownTarget } from "./features/workspace/AppDialogs";
+import {
+  AppDialogs,
+  type FileOperationRequest,
+  type NewMarkdownTarget,
+} from "./features/workspace/AppDialogs";
 import {
   applySnapshot as applyWorkspaceSnapshot,
   createDocumentFromSnapshot as createWorkspaceDocument,
@@ -74,6 +79,7 @@ import {
 import { WechatDraftDialog } from "./features/wechat/WechatDraftDialog";
 import {
   loadWechatAccounts,
+  moveWechatArticleSettings,
   removeFirstMarkdownHeading,
   saveWechatAccounts,
 } from "./lib/wechat";
@@ -113,6 +119,11 @@ type NewMarkdownRequest = NewMarkdownTarget & {
 type CreatedMarkdownFile = {
   path: string;
   snapshot: FileSnapshot;
+};
+
+type RenamedFile = {
+  path: string;
+  name: string;
 };
 
 type AppColorScheme = "system" | "light" | "dark";
@@ -181,6 +192,7 @@ function App() {
   const [saveConflict, setSaveConflict] = useState<SaveConflict | null>(null);
   const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
   const [newMarkdownRequest, setNewMarkdownRequest] = useState<NewMarkdownRequest | null>(null);
+  const [fileOperation, setFileOperation] = useState<FileOperationRequest | null>(null);
   const [pendingSystemOpenPaths, setPendingSystemOpenPaths] = useState<string[]>([]);
   const editorRef = useRef<EditorHandle>(null);
   const previewRef = useRef<PreviewHandle>(null);
@@ -984,6 +996,99 @@ function App() {
     }
   };
 
+  const refreshDirectoryTreesForPath = async (path: string): Promise<boolean> => {
+    const matching = directories.filter((directory) => isPathInside(path, directory.path));
+    if (matching.length === 0) return true;
+    try {
+      const refreshed = await Promise.all(matching.map(async (directory) => ({
+        id: directory.id,
+        tree: await invoke<Omit<OpenDirectory, "id">>("scan_directory", {
+          directoryPath: directory.path,
+        }),
+      })));
+      const trees = new Map(refreshed.map((item) => [item.id, item.tree]));
+      setDirectories((items) => items.map((directory) => {
+        const tree = trees.get(directory.id);
+        return tree ? { ...tree, id: directory.id } : directory;
+      }));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const requestFileOperation = (
+    kind: FileOperationRequest["kind"],
+    path: string,
+    name: string,
+  ) => {
+    const document = documentsRef.current.find((item) => item.path === path);
+    setFileOperation({
+      kind,
+      path,
+      name,
+      dirty: document ? hasUnsavedChanges(document) : false,
+    });
+  };
+
+  const renameRequestedFile = async (newName: string): Promise<boolean> => {
+    if (!fileOperation || fileOperation.kind !== "rename") return false;
+    const request = fileOperation;
+    try {
+      const renamed = await invoke<RenamedFile>("rename_file", {
+        filePath: request.path,
+        newName,
+      });
+      const updatedDocuments = documentsRef.current.map((document) => (
+        document.path === request.path
+          ? { ...document, path: renamed.path, name: renamed.name, externalState: "normal" as const }
+          : document
+      ));
+      documentsRef.current = updatedDocuments;
+      setDocuments(updatedDocuments);
+      moveArticlePreferences(request.path, renamed.path);
+      moveWechatArticleSettings(request.path, renamed.path);
+      setFileOperation(null);
+      const refreshed = await refreshDirectoryTreesForPath(request.path);
+      notify(
+        refreshed
+          ? `已重命名为 ${renamed.name}`
+          : `已重命名为 ${renamed.name}，但目录刷新失败，请重新打开目录`,
+        refreshed ? "success" : "neutral",
+      );
+      return true;
+    } catch (error) {
+      notify(`重命名失败：${String(error)}`, "error");
+      return false;
+    }
+  };
+
+  const deleteRequestedFile = async (): Promise<boolean> => {
+    if (!fileOperation || fileOperation.kind !== "delete") return false;
+    const request = fileOperation;
+    try {
+      await invoke("move_file_to_trash", { filePath: request.path });
+      const openDocumentIds = new Set(
+        documentsRef.current
+          .filter((document) => document.path === request.path)
+          .map((document) => document.id),
+      );
+      if (openDocumentIds.size > 0) removeDocuments(openDocumentIds);
+      setFileOperation(null);
+      const refreshed = await refreshDirectoryTreesForPath(request.path);
+      notify(
+        refreshed
+          ? `已将 ${request.name} 移到回收站`
+          : `文件已移到回收站，但目录刷新失败，请重新打开目录`,
+        refreshed ? "success" : "neutral",
+      );
+      return true;
+    } catch (error) {
+      notify(`删除失败：${String(error)}`, "error");
+      return false;
+    }
+  };
+
   const removeDirectory = (directoryId: string) => {
     setDirectories((items) => items.filter((item) => item.id !== directoryId));
     const removedDocumentIds = new Set(documentsRef.current.filter((item) => item.directoryId === directoryId).map((item) => item.id));
@@ -1293,6 +1398,8 @@ function App() {
             }}
             onShowOutline={() => setSidebarMode("outline")}
             onShowSearch={() => setSidebarMode("search")}
+            onRenameFile={(path, name) => requestFileOperation("rename", path, name)}
+            onDeleteFile={(path, name) => requestFileOperation("delete", path, name)}
           />
         )}
         {sidebarOpen && !focusMode && sidebarMode === "outline" && (
@@ -1727,6 +1834,7 @@ function App() {
             ? documents.find((item) => item.id === saveConflict.documentId)
             : undefined}
           newMarkdownTarget={newMarkdownRequest}
+          fileOperation={fileOperation}
           onCancelPendingClose={() => setPendingClose(null)}
           onDiscardPendingClose={() => {
             if (pendingClose) void finishPendingClose(pendingClose, true);
@@ -1738,6 +1846,9 @@ function App() {
           onOverwriteConflict={() => void overwriteConflict()}
           onCancelNewMarkdown={() => setNewMarkdownRequest(null)}
           onCreateNewMarkdown={createMarkdownInDirectory}
+          onCancelFileOperation={() => setFileOperation(null)}
+          onRenameFile={renameRequestedFile}
+          onDeleteFile={deleteRequestedFile}
         />
 
         {notice && (

@@ -87,6 +87,21 @@ export function saveWechatArticleSettings(path: string, settings: WechatArticleS
   }
 }
 
+export function moveWechatArticleSettings(previousPath: string, nextPath: string): boolean {
+  try {
+    const values = loadArticleSettings();
+    const previousKey = normalizePath(previousPath);
+    const nextKey = normalizePath(nextPath);
+    if (previousKey === nextKey || !values[previousKey]) return true;
+    values[nextKey] = values[previousKey];
+    delete values[previousKey];
+    window.localStorage.setItem(articleSettingsStorageKey, JSON.stringify(values));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function suggestedWechatTitle(markdown: string, fileName: string): string {
   const heading = markdown.match(/^\s*#\s+(.+?)\s*#*\s*$/m)?.[1];
   return cleanMarkdownText(heading ?? fileName.replace(/\.(?:md|markdown|mdown|mkd)$/i, "")).slice(0, 64);

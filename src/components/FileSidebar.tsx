@@ -13,9 +13,12 @@ import {
   Folder,
   FolderOpen,
   FilePlus2,
+  MoreHorizontal,
   PanelTopOpen,
+  Pencil,
   Plus,
   Search,
+  Trash2,
   X,
 } from "lucide-react";
 import clsx from "clsx";
@@ -37,6 +40,8 @@ type Props = {
   onOpenFolder: () => void;
   onShowOutline: () => void;
   onShowSearch: () => void;
+  onRenameFile: (path: string, name: string) => void;
+  onDeleteFile: (path: string, name: string) => void;
 };
 
 export function FileSidebar({
@@ -54,6 +59,8 @@ export function FileSidebar({
   onOpenFolder,
   onShowOutline,
   onShowSearch,
+  onRenameFile,
+  onDeleteFile,
 }: Props) {
   const [showAllFiles, setShowAllFiles] = useState(() => window.localStorage.getItem("wenrender-show-all-files") === "true");
   const [expanded, setExpanded] = useState<Set<string>>(() => {
@@ -188,37 +195,50 @@ export function FileSidebar({
             {standaloneDocuments.map((document) => {
               const dirty = hasUnsavedChanges(document);
               return (
-                <button
+                <div
                   key={document.id}
-                  title={document.path ?? document.name}
-                  onClick={() => onSelect(document.id)}
                   className={clsx(
-                    "group flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition",
+                    "group flex w-full min-w-0 items-center rounded-lg text-sm transition",
                     document.id === activeId
                       ? "bg-[#e3e3e0] text-[#20211f] dark:bg-[#30312e] dark:text-stone-100"
                       : "text-stone-600 hover:bg-[#eaeae7] dark:text-stone-400 dark:hover:bg-[#272825]",
                   )}
                 >
-                  <FileText size={15} className={clsx("shrink-0", document.id === activeId ? "text-stone-800 dark:text-stone-100" : "text-stone-400")} />
-                  <span className="min-w-0 flex-1 truncate">{document.name}</span>
-                  {dirty && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
-                  {document.externalState !== "normal" && (
-                    <span
-                      className={clsx("h-1.5 w-1.5 rounded-full", document.externalState === "deleted" ? "bg-red-500" : "bg-orange-500")}
-                      title={document.externalState === "deleted" ? "磁盘文件已删除" : "磁盘文件已被外部修改"}
+                  <button
+                    type="button"
+                    title={document.path ?? document.name}
+                    onClick={() => onSelect(document.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left"
+                  >
+                    <FileText size={15} className={clsx("shrink-0", document.id === activeId ? "text-stone-800 dark:text-stone-100" : "text-stone-400")} />
+                    <span className="min-w-0 flex-1 truncate">{document.name}</span>
+                    {dirty && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
+                    {document.externalState !== "normal" && (
+                      <span
+                        className={clsx("h-1.5 w-1.5 rounded-full", document.externalState === "deleted" ? "bg-red-500" : "bg-orange-500")}
+                        title={document.externalState === "deleted" ? "磁盘文件已删除" : "磁盘文件已被外部修改"}
+                      />
+                    )}
+                  </button>
+                  {document.path && document.externalState !== "deleted" && (
+                    <FileActionsMenu
+                      path={document.path}
+                      name={document.name}
+                      onRename={onRenameFile}
+                      onDelete={onDeleteFile}
                     />
                   )}
                   {standaloneDocuments.length > 1 && (
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      className="rounded p-0.5 opacity-0 hover:bg-stone-200 group-hover:opacity-100 dark:hover:bg-stone-700"
-                      onClick={(event) => { event.stopPropagation(); onClose(document.id); }}
+                    <button
+                      type="button"
+                      aria-label={`关闭 ${document.name}`}
+                      className="mr-1 rounded p-1 text-stone-400 opacity-0 hover:bg-stone-200 hover:text-stone-700 group-hover:opacity-100 dark:hover:bg-stone-700 dark:hover:text-stone-200"
+                      onClick={() => onClose(document.id)}
                     >
                       <X size={13} />
-                    </span>
+                    </button>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>
@@ -279,6 +299,8 @@ export function FileSidebar({
                       onToggle={toggleExpanded}
                       onSelect={onSelectTreeFile}
                       onNewInDirectory={onNewInDirectory}
+                      onRenameFile={onRenameFile}
+                      onDeleteFile={onDeleteFile}
                     />
                   )}
                 </div>
@@ -305,6 +327,8 @@ function DirectoryNodes({
   onToggle,
   onSelect,
   onNewInDirectory,
+  onRenameFile,
+  onDeleteFile,
 }: {
   nodes: DirectoryNode[];
   directoryId: string;
@@ -316,6 +340,8 @@ function DirectoryNodes({
   onToggle: (path: string) => void;
   onSelect: (node: DirectoryNode, directoryId: string) => void;
   onNewInDirectory: (directoryId: string, directoryPath: string, directoryName: string) => void;
+  onRenameFile: (path: string, name: string) => void;
+  onDeleteFile: (path: string, name: string) => void;
 }) {
   // “仅 MD”模式仍保留包含 Markdown 的祖先目录，否则用户无法展开到目标文件。
   const visibleNodes = nodes.filter((node) => showAllFiles || node.isMarkdown || (node.isDirectory && hasMarkdown(node)));
@@ -359,6 +385,8 @@ function DirectoryNodes({
                   onToggle={onToggle}
                   onSelect={onSelect}
                   onNewInDirectory={onNewInDirectory}
+                  onRenameFile={onRenameFile}
+                  onDeleteFile={onDeleteFile}
                 />
               )}
             </div>
@@ -367,31 +395,89 @@ function DirectoryNodes({
 
         const openDocument = documents.find((document) => document.path === node.path);
         return (
-          <button
+          <div
             key={node.path}
-            disabled={!node.isMarkdown}
-            onClick={() => node.isMarkdown && onSelect(node, directoryId)}
-            style={{ paddingLeft: paddingLeft + 18 }}
-            title={node.isMarkdown ? node.path : "仅 Markdown 文件可查看"}
             className={clsx(
-              "flex w-full min-w-0 items-center gap-2 overflow-hidden rounded-md py-1.5 pr-2 text-left text-[13px]",
+              "group flex w-full min-w-0 items-center overflow-hidden rounded-md text-[13px]",
               node.path === activePath
                 ? "bg-[#e3e3e0] text-[#20211f] dark:bg-[#30312e] dark:text-stone-100"
                 : node.isMarkdown
                   ? "text-stone-600 hover:bg-[#eaeae7] dark:text-stone-400 dark:hover:bg-[#272825]"
-                  : "cursor-not-allowed text-stone-400 dark:text-stone-600",
+                  : "text-stone-400 hover:bg-[#eaeae7] dark:text-stone-600 dark:hover:bg-[#272825]",
             )}
           >
-            {node.isMarkdown ? <FileCode2 size={14} className="shrink-0" /> : <File size={14} className="shrink-0" />}
-            <span className="min-w-0 flex-1 truncate">{node.name}</span>
-            {openDocument && hasUnsavedChanges(openDocument) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />}
-            {openDocument?.externalState !== undefined && openDocument.externalState !== "normal" && (
-              <span className={clsx("h-1.5 w-1.5 shrink-0 rounded-full", openDocument.externalState === "deleted" ? "bg-red-500" : "bg-orange-500")} />
-            )}
-          </button>
+            <button
+              type="button"
+              disabled={!node.isMarkdown}
+              onClick={() => node.isMarkdown && onSelect(node, directoryId)}
+              style={{ paddingLeft: paddingLeft + 18 }}
+              title={node.isMarkdown ? node.path : "仅 Markdown 文件可查看"}
+              className={clsx(
+                "flex min-w-0 flex-1 items-center gap-2 overflow-hidden py-1.5 pr-1 text-left",
+                !node.isMarkdown && "cursor-not-allowed",
+              )}
+            >
+              {node.isMarkdown ? <FileCode2 size={14} className="shrink-0" /> : <File size={14} className="shrink-0" />}
+              <span className="min-w-0 flex-1 truncate">{node.name}</span>
+              {openDocument && hasUnsavedChanges(openDocument) && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />}
+              {openDocument?.externalState !== undefined && openDocument.externalState !== "normal" && (
+                <span className={clsx("h-1.5 w-1.5 shrink-0 rounded-full", openDocument.externalState === "deleted" ? "bg-red-500" : "bg-orange-500")} />
+              )}
+            </button>
+            <FileActionsMenu
+              path={node.path}
+              name={node.name}
+              onRename={onRenameFile}
+              onDelete={onDeleteFile}
+            />
+          </div>
         );
       })}
     </div>
+  );
+}
+
+function FileActionsMenu({
+  path,
+  name,
+  onRename,
+  onDelete,
+}: {
+  path: string;
+  name: string;
+  onRename: (path: string, name: string) => void;
+  onDelete: (path: string, name: string) => void;
+}) {
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          aria-label={`${name} 的文件操作`}
+          title="文件操作"
+          className="mr-1 rounded p-1 text-stone-400 opacity-0 transition hover:bg-stone-200 hover:text-stone-700 focus:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 dark:hover:bg-stone-700 dark:hover:text-stone-200"
+        >
+          <MoreHorizontal size={14} />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="start"
+          sideOffset={4}
+          className="z-50 min-w-36 rounded-lg border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-700 dark:bg-[#292a27]"
+        >
+          <DropdownMenu.Item onSelect={() => onRename(path, name)} className="menu-item">
+            <Pencil size={14} />重命名
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            onSelect={() => onDelete(path, name)}
+            className="menu-item text-red-600 focus:bg-red-50 focus:text-red-700 dark:text-red-400 dark:focus:bg-red-950/40 dark:focus:text-red-300"
+          >
+            <Trash2 size={14} />移到回收站
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 
