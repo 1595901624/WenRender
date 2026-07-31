@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -1031,6 +1032,14 @@ function App() {
     });
   };
 
+  const revealFileInManager = async (path: string) => {
+    try {
+      await revealItemInDir(path);
+    } catch (error) {
+      notify(`打开文件位置失败：${String(error)}`, "error");
+    }
+  };
+
   const renameRequestedFile = async (newName: string): Promise<boolean> => {
     if (!fileOperation || fileOperation.kind !== "rename") return false;
     const request = fileOperation;
@@ -1398,6 +1407,7 @@ function App() {
             }}
             onShowOutline={() => setSidebarMode("outline")}
             onShowSearch={() => setSidebarMode("search")}
+            onRevealFile={(path) => void revealFileInManager(path)}
             onRenameFile={(path, name) => requestFileOperation("rename", path, name)}
             onDeleteFile={(path, name) => requestFileOperation("delete", path, name)}
           />
