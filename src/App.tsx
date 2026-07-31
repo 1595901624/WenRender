@@ -7,7 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { ArrowLeft, Blocks, Braces, Check, ChevronDown, Clipboard, CloudUpload, Code2, Copy, Eye, FileDown, FileInput, FileText, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Newspaper, Palette, PanelLeftClose, PanelLeftOpen, Printer, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
+import { ArrowLeft, Blocks, Check, ChevronDown, Clipboard, CloudUpload, Code2, Copy, Eye, FileDown, FileInput, FileText, Focus, FolderOpen, Link2, Menu, Minimize2, Monitor, Newspaper, Palette, PanelLeftClose, PanelLeftOpen, Printer, Save, Search, Settings, Smartphone, SplitSquareHorizontal, Type } from "lucide-react";
 import clsx from "clsx";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileSidebar } from "./components/FileSidebar";
@@ -26,6 +26,7 @@ import { ThemeEditorPanel } from "./components/ThemeEditorPanel";
 import { TitleBar } from "./components/TitleBar";
 import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
 import { TaskStatusIndicator, type TaskStatus } from "./components/TaskStatusIndicator";
+import { ToolRibbon } from "./components/ToolRibbon";
 import { createId, fileName } from "./lib/path";
 import { codeThemes, defaultCodeTheme } from "./lib/codeThemes";
 import { hasUnsavedChanges, needsSaveAttention } from "./lib/document";
@@ -175,6 +176,12 @@ function App() {
   const [notice, setNotice] = useState<Notice>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [taskStatus, setTaskStatus] = useState<TaskStatus | null>(null);
+  const [toolRibbonPinned, setToolRibbonPinned] = useState(
+    () => window.localStorage.getItem("wenrender-tool-ribbon-pinned") === "true",
+  );
+  const [toolRibbonOpen, setToolRibbonOpen] = useState(
+    () => window.localStorage.getItem("wenrender-tool-ribbon-pinned") === "true",
+  );
   const [themeId, setThemeId] = useState(() => window.localStorage.getItem("wenrender-theme") ?? defaultTheme.id);
   const [customThemes, setCustomThemes] = useState(loadCustomThemes);
   const [codeThemeId, setCodeThemeId] = useState(
@@ -207,6 +214,8 @@ function App() {
   const systemOpenChain = useRef(Promise.resolve());
   const allowWindowClose = useRef(false);
   const taskDismissTimer = useRef<number | null>(null);
+  const toolButtonRef = useRef<HTMLButtonElement>(null);
+  const toolRibbonRef = useRef<HTMLDivElement>(null);
   documentsRef.current = documents;
 
   // 目录需要重新扫描以反映磁盘最新状态，文件则按上次的打开顺序恢复。
@@ -353,6 +362,23 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem("wenrender-sidebar-open", String(sidebarOpen));
   }, [sidebarOpen]);
+
+  useEffect(() => {
+    window.localStorage.setItem("wenrender-tool-ribbon-pinned", String(toolRibbonPinned));
+  }, [toolRibbonPinned]);
+
+  useEffect(() => {
+    if (!toolRibbonOpen || toolRibbonPinned) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (toolButtonRef.current?.contains(target) || toolRibbonRef.current?.contains(target)) return;
+      if (target.closest('[role="menu"], [role="dialog"]')) return;
+      setToolRibbonOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [toolRibbonOpen, toolRibbonPinned]);
 
   useEffect(() => {
     window.localStorage.setItem("wenrender-sidebar-mode", sidebarMode);
@@ -1631,13 +1657,15 @@ function App() {
       }
       if (event.key === "Escape" && commandPaletteOpen) {
         setCommandPaletteOpen(false);
+      } else if (event.key === "Escape" && toolRibbonOpen) {
+        setToolRibbonOpen(false);
       } else if (event.key === "Escape" && focusMode) {
         setFocusMode(false);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [active, commandPaletteOpen, focusMode]);
+  }, [active, commandPaletteOpen, focusMode, toolRibbonOpen]);
 
   useEffect(() => () => {
     if (taskDismissTimer.current !== null) window.clearTimeout(taskDismissTimer.current);
@@ -1860,49 +1888,104 @@ function App() {
             <button className="ml-1 inline-flex h-9 items-center gap-2 rounded-lg bg-[#20211f] px-3.5 text-sm font-medium text-white transition hover:bg-black" onClick={copyToWechat}>
               <Clipboard size={16} />复制到公众号
             </button>
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 focus-visible:ring-2 focus-visible:ring-moss-500 dark:text-stone-300 dark:hover:bg-stone-800" aria-label="更多工具">
-                  <Menu size={15} /><span>工具</span><ChevronDown size={13} />
-                </button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content align="end" sideOffset={8} className="z-50 min-w-60 rounded-xl border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-600 dark:bg-[#292a27]">
-                  <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-500 dark:text-stone-300">写作工具</DropdownMenu.Label>
-                  <DropdownMenu.Item onSelect={() => { setTypographyPanelOpen((value) => !value); setThemeEditorOpen(false); if (viewMode === "editor") setViewMode("split"); }} className="menu-item"><Type size={15} />排版设置{typographyCustomCount > 0 && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-amber-500" />}</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => { setSidebarOpen(true); setSidebarMode("blocks"); setFocusMode(false); setActivePage("workspace"); }} className="menu-item"><Blocks size={15} />内容块<span className="ml-auto text-[10px] text-stone-500 dark:text-stone-300">Ctrl/⌘ ⇧ K</span></DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => { setFocusMode((value) => !value); setActivePage("workspace"); }} className="menu-item">{focusMode ? <Minimize2 size={15} /> : <Focus size={15} />}{focusMode ? "退出专注模式" : "专注模式"}</DropdownMenu.Item>
-                  <DropdownMenu.CheckboxItem checked={syncScroll} onCheckedChange={() => setSyncScroll((value) => !value)} className="menu-item">
-                    <Link2 size={15} />同步滚动
-                    <DropdownMenu.ItemIndicator className="ml-auto"><Check size={14} /></DropdownMenu.ItemIndicator>
-                  </DropdownMenu.CheckboxItem>
-                  <DropdownMenu.Sub>
-                    <DropdownMenu.SubTrigger className="menu-item"><Braces size={15} />代码主题<span className="ml-auto text-xs text-stone-500 dark:text-stone-300">{codeTheme.name} ›</span></DropdownMenu.SubTrigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.SubContent sideOffset={6} className="z-[60] min-w-52 rounded-xl border border-stone-200 bg-white p-1.5 text-sm shadow-xl dark:border-stone-600 dark:bg-[#292a27]">
-                        {codeThemes.map((item) => <DropdownMenu.Item key={item.id} onSelect={() => selectCodeTheme(item.id)} className="menu-item">{item.id === selectedCodeThemeId ? <Check size={14} /> : <span className="w-3.5" />}{item.name}</DropdownMenu.Item>)}
-                      </DropdownMenu.SubContent>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Sub>
-                  <DropdownMenu.Item onSelect={() => setWechatDraftOpen(true)} className="menu-item"><Newspaper size={15} />同步到公众号草稿箱</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => void uploadCurrentArticleImages()} className="menu-item"><CloudUpload size={15} />上传文章图片</DropdownMenu.Item>
-                  <DropdownMenu.Separator className="my-1 h-px bg-stone-100 dark:bg-stone-700" />
-                  <DropdownMenu.Label className="px-2.5 py-1 text-[10px] font-medium text-stone-500 dark:text-stone-300">导入与导出</DropdownMenu.Label>
-                  <DropdownMenu.Item onSelect={() => void importHtmlDocument()} className="menu-item"><FileInput size={15} />导入 HTML</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => void importDocxDocument()} className="menu-item"><FileInput size={15} />导入 DOCX</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => void copyMarkdown()} className="menu-item"><Copy size={15} />复制 Markdown</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => void copyUnstyledRichText()} className="menu-item"><Clipboard size={15} />复制无样式富文本</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => void exportHtml()} className="menu-item"><FileDown size={15} />导出 HTML</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => void exportPrintPdf()} className="menu-item"><Printer size={15} />导出 PDF（打印）</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => void exportPlainText()} className="menu-item"><FileText size={15} />导出纯文本</DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => void saveDocumentAs()} className="menu-item"><Save size={15} />另存为 Markdown</DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
+            <button
+              ref={toolButtonRef}
+              type="button"
+              aria-expanded={toolRibbonOpen}
+              aria-controls="tool-ribbon"
+              onClick={() => setToolRibbonOpen((value) => !value)}
+              className={clsx(
+                "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition focus-visible:ring-2 focus-visible:ring-moss-500",
+                toolRibbonOpen
+                  ? "bg-stone-100 text-stone-900 dark:bg-stone-700 dark:text-stone-100"
+                  : "text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800",
+              )}
+            >
+              <Menu size={15} /><span>工具</span><ChevronDown size={13} className={toolRibbonOpen ? "rotate-180 transition" : "transition"} />
+            </button>
           </div>
           </>
           )}
         </header>
+
+        {activePage === "workspace" && toolRibbonOpen && (
+          <div ref={toolRibbonRef}>
+            <ToolRibbon
+              pinned={toolRibbonPinned}
+              focusMode={focusMode}
+              syncScroll={syncScroll}
+              typographyCustomCount={typographyCustomCount}
+              codeThemes={codeThemes}
+              selectedCodeThemeId={selectedCodeThemeId}
+              onTogglePinned={() => setToolRibbonPinned((value) => !value)}
+              onClose={() => setToolRibbonOpen(false)}
+              onTypography={() => {
+                setTypographyPanelOpen((value) => !value);
+                setThemeEditorOpen(false);
+                if (viewMode === "editor") setViewMode("split");
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onBlocks={() => {
+                setSidebarOpen(true);
+                setSidebarMode("blocks");
+                setFocusMode(false);
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onToggleFocus={() => {
+                setFocusMode((value) => !value);
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onToggleSyncScroll={() => {
+                setSyncScroll((value) => !value);
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onSelectCodeTheme={(id) => {
+                selectCodeTheme(id);
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onWechatDraft={() => {
+                setWechatDraftOpen(true);
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onUploadImages={() => {
+                void uploadCurrentArticleImages();
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onImportHtml={() => {
+                void importHtmlDocument();
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onImportDocx={() => {
+                void importDocxDocument();
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onCopyMarkdown={() => {
+                void copyMarkdown();
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onCopyUnstyled={() => {
+                void copyUnstyledRichText();
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onExportHtml={() => {
+                void exportHtml();
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onExportPdf={() => {
+                void exportPrintPdf();
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onExportText={() => {
+                void exportPlainText();
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+              onSaveAs={() => {
+                void saveDocumentAs();
+                if (!toolRibbonPinned) setToolRibbonOpen(false);
+              }}
+            />
+          </div>
+        )}
 
         {activePage === "settings" ? (
           <SettingsPage

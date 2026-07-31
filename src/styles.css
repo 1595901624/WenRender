@@ -82,6 +82,18 @@
   .settings-input {
     @apply block h-9 w-full rounded-lg border border-stone-200 bg-white px-3 text-sm text-stone-700 outline-none transition placeholder:text-stone-400 focus:border-stone-500 focus:ring-1 focus:ring-stone-300 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:focus:border-stone-500 dark:focus:ring-stone-600;
   }
+  .ribbon-label {
+    @apply shrink-0 px-1 text-[10px] font-semibold text-stone-400 dark:text-stone-300;
+  }
+  .ribbon-button {
+    @apply inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-stone-600 transition hover:bg-stone-100 hover:text-stone-900 focus-visible:ring-2 focus-visible:ring-moss-500 dark:text-stone-200 dark:hover:bg-stone-700 dark:hover:text-white;
+  }
+  .ribbon-icon-button {
+    @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 focus-visible:ring-2 focus-visible:ring-moss-500 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-white;
+  }
+  .ribbon-icon-button-active {
+    @apply bg-stone-200 text-stone-900 shadow-sm dark:bg-stone-700 dark:text-stone-100;
+  }
 }
 
 .cm-editor.cm-focused { outline: none; }
