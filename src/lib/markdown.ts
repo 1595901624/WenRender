@@ -89,11 +89,7 @@ function createRenderer(
   md.renderer.rules.heading_open = (tokens, index) => {
     const level = Number(tokens[index].tag.slice(1));
     const heading = typography.headings[`h${level}` as HeadingKey];
-    if (level === 1) {
-      return `<h1 style="${baseHeadingStyle(theme, heading)}letter-spacing:.01em;">`;
-    }
-    if (level === 2) return `<h2 style="${headingStyle(theme, heading)}">`;
-    return `<h${level} style="${baseHeadingStyle(theme, heading)}padding-left:10px;border-left:3px solid ${theme.colors.accent};">`;
+    return `<h${level} style="${headingStyle(theme, heading, level)}">`;
   };
   md.renderer.rules.strong_open = () => `<strong style="color:${theme.colors.accent};font-weight:700;">`;
   md.renderer.rules.code_inline = (tokens, index) => `<code style="${inlineCode}">${md.utils.escapeHtml(tokens[index].content)}</code>`;
@@ -159,35 +155,40 @@ function baseHeadingStyle(theme: ArticleTheme, heading: ResolvedHeadingTypograph
   return `margin:${heading.marginTop}px 0 ${heading.marginBottom}px;color:${theme.colors.heading};font-family:${heading.fontFamily};font-size:${heading.fontSize}px;line-height:${heading.lineHeight};font-weight:${heading.fontWeight};text-align:${heading.textAlign};`;
 }
 
-function headingStyle(theme: ArticleTheme, heading: ResolvedHeadingTypography): string {
+function headingStyle(
+  theme: ArticleTheme,
+  heading: ResolvedHeadingTypography,
+  level: number,
+): string {
   const base = baseHeadingStyle(theme, heading);
   const accent = theme.colors.accent;
+  const titleDetail = level === 1 ? "letter-spacing:.01em;" : "";
   // 带短装饰的标题居中时使用 table 布局，避免 inline-block 的 auto margin 在微信中失效。
   const compactDisplay = heading.textAlign === "center"
     ? "display:table;margin-left:auto;margin-right:auto;"
     : "display:inline-block;";
   switch (theme.appearance.headingStyle) {
     case "left-bar":
-      return `${base}display:block;padding:3px 0 3px 12px;border-left:4px solid ${accent};`;
+      return `${base}${titleDetail}display:block;padding:3px 0 3px 12px;border-left:4px solid ${accent};`;
     case "filled":
-      return `${base}${compactDisplay}padding:5px 12px;background-color:${theme.colors.accentSoft};border:1px solid ${accent};border-radius:5px;`;
+      return `${base}${titleDetail}${compactDisplay}padding:5px 12px;background-color:${theme.colors.accentSoft};border:1px solid ${accent};border-radius:5px;`;
     case "centered":
-      return `${base}display:block;padding:0 0 10px;text-align:center;border-bottom:1px solid ${theme.colors.border};`;
+      return `${base}${titleDetail}display:block;padding:0 0 10px;text-align:center;border-bottom:1px solid ${theme.colors.border};`;
     case "boxed":
-      return `${base}${compactDisplay}padding:5px 12px;border:1px solid ${accent};border-radius:6px;`;
+      return `${base}${titleDetail}${compactDisplay}padding:5px 12px;border:1px solid ${accent};border-radius:6px;`;
     case "marker":
-      return `${base}${compactDisplay}padding:3px 7px;background-color:${theme.colors.accentSoft};border-bottom:4px solid ${accent};`;
+      return `${base}${titleDetail}${compactDisplay}padding:3px 7px;background-color:${theme.colors.accentSoft};border-bottom:4px solid ${accent};`;
     case "double-line":
-      return `${base}display:block;padding:9px 0;text-align:center;border-top:1px solid ${accent};border-bottom:1px solid ${accent};`;
+      return `${base}${titleDetail}display:block;padding:9px 0;text-align:center;border-top:1px solid ${accent};border-bottom:1px solid ${accent};`;
     case "minimal":
-      return `${base}display:block;padding:0 0 8px;border-bottom:1px solid ${theme.colors.border};`;
+      return `${base}${titleDetail}display:block;padding:0 0 8px;border-bottom:1px solid ${theme.colors.border};`;
     case "tag":
-      return `${base}${compactDisplay}padding:5px 12px;background-color:${accent};color:${contrastText(accent)};border-radius:2px;`;
+      return `${base}${titleDetail}${compactDisplay}padding:5px 12px;background-color:${accent};color:${contrastText(accent)};border-radius:2px;`;
     case "newspaper":
       return `${base}display:block;padding:8px 0;text-align:center;letter-spacing:.08em;border-top:2px solid ${accent};border-bottom:1px solid ${accent};`;
     case "underline":
     default:
-      return `${base}${compactDisplay}padding:0 0 8px;border-bottom:3px solid ${accent};`;
+      return `${base}${titleDetail}${compactDisplay}padding:0 0 8px;border-bottom:3px solid ${accent};`;
   }
 }
 

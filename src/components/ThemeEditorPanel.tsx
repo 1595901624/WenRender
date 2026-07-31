@@ -96,6 +96,7 @@ export function ThemeEditorPanel({
               ["newspaper", "报刊标题"],
             ]}
           />
+          <p className="text-[10px] leading-4 text-stone-400">装饰会应用到文章中的 H1–H6 全部标题层级。</p>
           <SelectSetting
             label="引用块"
             value={theme.appearance.blockquoteStyle}
