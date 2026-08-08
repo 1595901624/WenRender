@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use image::{codecs::jpeg::JpegEncoder, DynamicImage, GenericImageView};
 use percent_encoding::percent_decode_str;
 use regex::Regex;
@@ -323,7 +324,7 @@ async fn upload_content_images(
 }
 
 fn should_upload_content_image(source: &str) -> bool {
-    if source.starts_with("wenrender-local-image:") {
+    if source.starts_with("wenrender-local-image:") || is_inline_image(source) {
         return true;
     }
     if let Ok(url) = Url::parse(source) {
@@ -358,6 +359,9 @@ async fn load_content_image(client: &Client, source: &str) -> Result<PreparedIma
             std::fs::read(&path).map_err(|error| format!("无法读取正文图片 {path}：{error}"))?;
         return prepare_image(&bytes, Path::new(&path), MAX_BODY_IMAGE_BYTES);
     }
+    if is_inline_image(source) {
+        return load_inline_image(source);
+    }
     let url = validate_remote_image_url(source)?;
     let response = client
         .get(url.clone())
@@ -389,6 +393,51 @@ async fn load_content_image(client: &Client, source: &str) -> Result<PreparedIma
         .filter(|value| !value.is_empty())
         .unwrap_or("remote-image.jpg");
     prepare_image(&bytes, Path::new(file_name), MAX_BODY_IMAGE_BYTES)
+}
+
+fn is_inline_image(source: &str) -> bool {
+    source
+        .get(.."data:image/".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:image/"))
+}
+
+fn load_inline_image(source: &str) -> Result<PreparedImage, String> {
+    let (metadata, payload) = source
+        .split_once(',')
+        .ok_or_else(|| "正文中的 base64 图片格式无效".to_string())?;
+    let prefix = metadata
+        .get(.."data:".len())
+        .filter(|value| value.eq_ignore_ascii_case("data:"))
+        .ok_or_else(|| "正文中的 base64 图片格式无效".to_string())?;
+    let mut parts = metadata[prefix.len()..].split(';');
+    let mime_type = parts.next().unwrap_or_default().to_ascii_lowercase();
+    if !mime_type.starts_with("image/") || !parts.any(|value| value.eq_ignore_ascii_case("base64"))
+    {
+        return Err("正文内联图片必须使用 data:image/...;base64 格式".to_string());
+    }
+
+    // 在解码前限制文本长度，避免异常 data URL 造成不必要的大块内存分配。
+    let maximum_encoded_bytes = MAX_REMOTE_IMAGE_BYTES.saturating_mul(4) / 3 + 16;
+    if payload.len() > maximum_encoded_bytes {
+        return Err("正文中的 base64 图片超过 12 MB".to_string());
+    }
+    let bytes = BASE64
+        .decode(payload.trim())
+        .map_err(|_| "正文中的 base64 图片无法解码".to_string())?;
+    if bytes.len() > MAX_REMOTE_IMAGE_BYTES {
+        return Err("正文中的 base64 图片超过 12 MB".to_string());
+    }
+
+    let extension = match mime_type.as_str() {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/bmp" | "image/x-ms-bmp" => "bmp",
+        _ => "image",
+    };
+    let file_name = format!("inline-image.{extension}");
+    prepare_image(&bytes, Path::new(&file_name), MAX_BODY_IMAGE_BYTES)
 }
 
 async fn upload_body_image(
@@ -681,7 +730,10 @@ fn require(value: &str, label: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_private_address, prepare_image, should_upload_content_image};
+    use super::{
+        is_private_address, load_inline_image, prepare_image, should_upload_content_image,
+    };
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
     use image::DynamicImage;
     use std::{io::Cursor, net::IpAddr, path::Path};
 
@@ -695,6 +747,12 @@ mod tests {
         ));
         assert!(should_upload_content_image(
             "wenrender-local-image:C%3A%5Carticle.png"
+        ));
+        assert!(should_upload_content_image(
+            "data:image/png;base64,iVBORw0KGgo="
+        ));
+        assert!(should_upload_content_image(
+            "Data:Image/PNG;Base64,iVBORw0KGgo="
         ));
     }
 
@@ -722,5 +780,31 @@ mod tests {
             .expect("prepare image");
         assert_eq!(prepared.mime_type, "image/jpeg");
         assert!(prepared.bytes.len() <= 1024 * 1024);
+    }
+
+    #[test]
+    fn prepares_inline_base64_image_for_wechat() {
+        let image = DynamicImage::new_rgb8(8, 8);
+        let mut bytes = Cursor::new(Vec::new());
+        image
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .expect("encode test png");
+        let source = format!(
+            "data:image/png;base64,{}",
+            BASE64.encode(bytes.into_inner())
+        );
+
+        let prepared = load_inline_image(&source).expect("prepare inline image");
+
+        assert_eq!(prepared.mime_type, "image/png");
+        assert!(prepared.bytes.len() <= 1024 * 1024);
+    }
+
+    #[test]
+    fn rejects_non_base64_inline_image() {
+        let error = load_inline_image("data:image/png,not-base64")
+            .err()
+            .expect("non-base64 data URL should fail");
+        assert!(error.contains("base64"));
     }
 }
