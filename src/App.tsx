@@ -456,6 +456,7 @@ function App() {
         return localPath ? `wenrender-local-image:${encodeURIComponent(localPath)}` : imageSource;
       },
       typographyOverrides,
+      true,
     );
   }, [active.content, active.path, baseTheme, codeTheme, typographyOverrides]);
 

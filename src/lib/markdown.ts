@@ -67,10 +67,13 @@ function createRenderer(
   codeTheme: CodeTheme,
   resolveImage?: (source: string) => string,
   typographyOverrides: TypographyOverrides = {},
+  compactForWechatDraft = false,
 ) {
   const typography = resolveArticleTypography(theme, typographyOverrides);
   const bodyText = `font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight} !important;color:${theme.colors.text};letter-spacing:0;text-align:left;`;
-  const paragraph = `margin:0 0 ${typography.paragraphSpacing}px;${bodyText}`;
+  const paragraph = compactForWechatDraft
+    ? `margin:0 0 ${typography.paragraphSpacing}px;color:${theme.colors.text};`
+    : `margin:0 0 ${typography.paragraphSpacing}px;${bodyText}`;
   const inlineCode = `font-size:${theme.typography.codeSize}px;word-break:break-word;padding:2px 5px;border-radius:4px;margin:0 2px;color:${theme.colors.accent};font-weight:600;background-color:${theme.colors.inlineCodeBackground};font-family:Consolas,'SFMono-Regular',Menlo,monospace;`;
   let tableRow = 0;
   // 所有关键样式直接写进标签，复制到公众号后不需要加载样式表或脚本。
@@ -93,9 +96,12 @@ function createRenderer(
   };
   md.renderer.rules.strong_open = () => `<strong style="color:${theme.colors.accent};font-weight:700;">`;
   md.renderer.rules.code_inline = (tokens, index) => `<code style="${inlineCode}">${md.utils.escapeHtml(tokens[index].content)}</code>`;
-  md.renderer.rules.blockquote_open = () => `<blockquote style="${blockquoteStyle(theme, typography)}">`;
-  md.renderer.rules.bullet_list_open = () => `<ul style="margin:8px 0 18px;padding-left:24px;font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight};">`;
-  md.renderer.rules.ordered_list_open = () => `<ol style="margin:8px 0 18px;padding-left:24px;font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight};">`;
+  md.renderer.rules.blockquote_open = () => `<blockquote style="${blockquoteStyle(theme, typography, compactForWechatDraft)}">`;
+  const listTypography = compactForWechatDraft
+    ? ""
+    : `font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight};`;
+  md.renderer.rules.bullet_list_open = () => `<ul style="margin:8px 0 18px;padding-left:24px;${listTypography}">`;
+  md.renderer.rules.ordered_list_open = () => `<ol style="margin:8px 0 18px;padding-left:24px;${listTypography}">`;
   md.renderer.rules.list_item_open = () => '<li style="margin:7px 0;">';
   md.renderer.rules.link_open = (tokens, index, options, env, self) => {
     const decoration = theme.appearance.linkStyle === "underline"
@@ -163,10 +169,10 @@ function headingStyle(
   const base = baseHeadingStyle(theme, heading);
   const accent = theme.colors.accent;
   const titleDetail = level === 1 ? "letter-spacing:.01em;" : "";
-  // 带短装饰的标题居中时使用 table 布局，避免 inline-block 的 auto margin 在微信中失效。
+  // 使用 table 让短装饰贴合标题文字，同时保持标题为块级布局，连续标题不会挤在同一行。
   const compactDisplay = heading.textAlign === "center"
     ? "display:table;margin-left:auto;margin-right:auto;"
-    : "display:inline-block;";
+    : "display:table;margin-left:0;margin-right:0;";
   switch (theme.appearance.headingStyle) {
     case "left-bar":
       return `${base}${titleDetail}display:block;padding:3px 0 3px 12px;border-left:4px solid ${accent};`;
@@ -192,8 +198,15 @@ function headingStyle(
   }
 }
 
-function blockquoteStyle(theme: ArticleTheme, typography: ResolvedArticleTypography): string {
-  const base = `margin:20px 0;padding:13px 16px;color:${theme.colors.muted};font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight};`;
+function blockquoteStyle(
+  theme: ArticleTheme,
+  typography: ResolvedArticleTypography,
+  compactForWechatDraft: boolean,
+): string {
+  const inheritedTypography = compactForWechatDraft
+    ? ""
+    : `font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight};`;
+  const base = `margin:20px 0;padding:13px 16px;color:${theme.colors.muted};${inheritedTypography}`;
   switch (theme.appearance.blockquoteStyle) {
     case "soft":
       return `${base}background-color:${theme.colors.accentSoft};border-radius:8px;`;
@@ -225,13 +238,32 @@ export function renderMarkdown(
   codeTheme: CodeTheme = defaultCodeTheme,
   resolveImage?: (source: string) => string,
   typographyOverrides: TypographyOverrides = {},
+  compactForWechatDraft = false,
 ): string {
-  const md = createRenderer(theme, codeTheme, resolveImage, typographyOverrides);
+  // 自定义 CSS 可能依赖原有的层叠关系，这类主题保持完整输出，避免压缩改变其效果。
+  const shouldCompactForWechatDraft = compactForWechatDraft && !theme.customCss?.trim();
+  const md = createRenderer(
+    theme,
+    codeTheme,
+    resolveImage,
+    typographyOverrides,
+    shouldCompactForWechatDraft,
+  );
   const rendered = md.render(source);
   const customCss = theme.customCss?.trim().replace(/<\/style/gi, "<\\/style");
+  if (!shouldCompactForWechatDraft) {
+    return customCss
+      ? `<style>${customCss}</style><section class="wenrender-theme-content">${rendered}</section>`
+      : rendered;
+  }
+
+  // 草稿接口按 HTML 字符数计费；只在同步草稿时提升可继承样式，其他渲染出口保持原样。
+  const typography = resolveArticleTypography(theme, typographyOverrides);
+  const bodyStyle = `font-family:${typography.bodyFontFamily};font-size:${typography.bodySize}px;line-height:${typography.bodyLineHeight} !important;color:${theme.colors.text};letter-spacing:0;text-align:left;`;
+  const content = `<section class="wenrender-theme-content" style="${bodyStyle}">${rendered}</section>`;
   return customCss
-    ? `<style>${customCss}</style><section class="wenrender-theme-content">${rendered}</section>`
-    : rendered;
+    ? `<style>${customCss}</style>${content}`
+    : content;
 }
 
 export function wrapHtml(

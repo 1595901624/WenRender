@@ -19,6 +19,8 @@ const KEYRING_SERVICE: &str = "com.wenrender.wechat-official-account";
 const MAX_BODY_IMAGE_BYTES: usize = 1024 * 1024;
 const MAX_COVER_BYTES: usize = 10 * 1024 * 1024;
 const MAX_REMOTE_IMAGE_BYTES: usize = 12 * 1024 * 1024;
+const MAX_DRAFT_CONTENT_CHARS: usize = 20_000;
+const MAX_DRAFT_CONTENT_BYTES: usize = 1024 * 1024;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -133,10 +135,12 @@ pub(crate) async fn sync_wechat_draft(
     let (token, _) = access_token(&client, &request.account_id, &request.app_id).await?;
     let (content, uploaded_images) =
         upload_content_images(&client, &token, &request.content).await?;
-    if content.chars().count() > 20_000 || content.len() > 1024 * 1024 {
-        return Err(
-            "公众号正文超过接口限制（最多约 2 万字符且小于 1 MB），请精简文章或样式".to_string(),
-        );
+    let content_characters = content.chars().count();
+    let content_bytes = content.len();
+    if content_characters >= MAX_DRAFT_CONTENT_CHARS || content_bytes >= MAX_DRAFT_CONTENT_BYTES {
+        return Err(format!(
+            "公众号正文超过接口限制：当前 {content_characters} 个字符、{content_bytes} 字节，要求少于 20000 个字符且小于 1 MB。正文图片已替换为微信 URL，请精简文字、代码或自定义样式"
+        ));
     }
     let cover_bytes =
         std::fs::read(&request.cover_path).map_err(|error| format!("无法读取封面图片：{error}"))?;
