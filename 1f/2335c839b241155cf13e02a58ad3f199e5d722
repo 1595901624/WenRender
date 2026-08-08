@@ -1,0 +1,244 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.0.8",
+  "base_commit_sha": "1f2335c839b241155cf13e02a58ad3f199e5d722",
+  "prompts": {
+    "0d6c2cab2e6ba53d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa6b5-6539-7ab3-b7f0-0e3061c8a050",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 131,
+      "total_deletions": 14,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "13d970c83ea6d654": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb7b6-2822-71d2-9190-c3606da55634",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 16,
+      "total_deletions": 15,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "4402179a535f3f6d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa94e-fd05-79e0-b239-316525e6b295",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    },
+    "51afa7590deac09b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa67c-71be-7d43-abf6-ae1784ef47b0",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 2920,
+      "total_deletions": 1374,
+      "accepted_lines": 1150,
+      "overriden_lines": 0
+    },
+    "5a3c08f34395f212": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb8eb-ad79-7980-a697-10e6d98416b7",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "87a0a073af33e903": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9e9d-8584-7572-996e-08e619fdcc27",
+        "model": "unknown"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "8e553a87552de1b4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa8cb-bcdc-7682-95c1-050c193b01e4",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 33,
+      "total_deletions": 16,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "b3ac59125c9c6256": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa92c-9d6e-7d11-94fc-70fdc6e7f2db",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 1351,
+      "total_deletions": 1184,
+      "accepted_lines": 64,
+      "overriden_lines": 0
+    },
+    "b3bff340d7ab7c9c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa8d4-836f-7310-9d38-5f957accfae8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 1479,
+      "total_deletions": 2149,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "b91e639e05e6ee42": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa8fc-0287-7be2-9c05-f32484675016",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 80,
+      "total_deletions": 2,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "bd1ce5ca9089ff20": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9978-b172-75e2-a15a-ee733406975b",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 2754,
+      "total_deletions": 866,
+      "accepted_lines": 954,
+      "overriden_lines": 0
+    },
+    "c161c3c86d269ac3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa8ef-b857-7051-80eb-9a984105f7f8",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 3,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "c55997fafb851449": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fb23c-cdca-7b93-9b0c-4221f6945681",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 1,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    },
+    "d9769339c03b9b84": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019faca1-ab99-7181-868c-c8ab85a91166",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 7415,
+      "total_deletions": 7415,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "e85bc930aa43d3d4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f9e9d-01da-7fd0-aba0-82d6ff00c862",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 52,
+      "total_deletions": 33,
+      "accepted_lines": 19,
+      "overriden_lines": 0
+    },
+    "f906d882ce58f8f6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fa903-eca4-70b3-8042-39d30740c171",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "luhaoyu <haoyu3@163.com>",
+      "messages": [],
+      "total_additions": 820,
+      "total_deletions": 817,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  },
+  "commit_stats": {
+    "git_diff_added_lines": 86,
+    "git_diff_deleted_lines": 2,
+    "ai_additions": 0,
+    "ai_accepted": 0,
+    "BYMC": 82,
+    "mixed_additions": 0,
+    "BYAC": 0,
+    "BYRC": 0,
+    "per_file": {
+      "src-tauri/src/commands/wechat.rs": {
+        "BYMC": [
+          "9",
+          "327",
+          "362-364",
+          "398-440",
+          "733-736",
+          "751-755",
+          "784-808"
+        ],
+        "BYAC": [],
+        "BYRC": []
+      }
+    }
+  },
+  "ipa_account": "luhaoyu",
+  "commit_timestamp": 1786159538,
+  "requirement_id": ""
+}
